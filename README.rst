@@ -59,3 +59,12 @@ Kerberos
     acedump -k -s DC01.BOX.HTB -u USER -d BOX.HTB
 
 |
+
+***********
+Interactive
+***********
+
+| ACEDump connect to LDAP and start a python console.
+| The connection object is "conn"
+
+|

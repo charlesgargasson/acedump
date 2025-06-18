@@ -7,6 +7,7 @@ import sys
 from ldap3 import Server, Connection, ALL, SUBTREE
 from ldap3.protocol.formatters.formatters import format_sid
 from colorama import Fore, Back, Style
+import code
 
 import logging
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ parser.add_argument('-f', '--filter', help='LDAP filter')
 parser.add_argument('--hash', help='NTLM hash (LM:NT format)')
 parser.add_argument('--allsid', action='store_true', help='Include all SID (low rid/default)')
 parser.add_argument('--debug', action='store_true', help='Enable debug output')
+parser.add_argument('-i','--interact', action='store_true', help='Interact with python console with conn set')
 args = parser.parse_args()
 
 # Common AD GUIDs for property/extended rights
@@ -136,6 +138,14 @@ ACCESS_MASK = {
 }
 
 collected_sids={}
+
+
+interact_help="""
+------------------------
+ACEDump interactive mode
+------------------------
+"""
+
 
 def format_guid(guid_bytes):
     """Format GUID bytes to string"""
@@ -462,9 +472,11 @@ def parse_sd_search_results(conn):
                     target_object = ace.get('object_type_name', ace.get('object_type_guid', 'Any Property'))
                     #target_inherited_object = ace.get('inherited_object_type_name', ace.get('object_type_guid', 'ALL'))
 
-                    line = Style.BRIGHT
+                    line = Style.NORMAL
                     line += ace['type']
                     line += Fore.CYAN + f" {entry.distinguishedName}"
+                    line += Style.RESET_ALL
+                    line += Style.BRIGHT
                     line += Fore.WHITE + " : "
                     line += Fore.MAGENTA + f"{target_object}"
                     line += Fore.WHITE + " < "
@@ -578,6 +590,11 @@ def main():
     
     conn = connect()
     if not conn:
+        return
+    
+    if args.interact:
+        print(interact_help)
+        code.interact(local={**globals(), **locals()})
         return
     
     if args.filter:
