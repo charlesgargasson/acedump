@@ -7,6 +7,7 @@ setup(
     install_requires=[
         'ldap3',
         'colorama',
+        'gssapi',
     ],
     entry_points={
         'console_scripts': [
