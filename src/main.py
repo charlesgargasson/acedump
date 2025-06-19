@@ -2,143 +2,45 @@
 
 # https://learn.microsoft.com/en-us/windows/win32/api/iads/ne-iads-ads_rights_enum
 
-import struct
+from io import StringIO
 import sys
+
+original_stdout = sys.stdout
+sys.stdout = StringIO()
+from libfaketime import fake_time, reexec_if_needed
+reexec_if_needed()
+sys.stdout = original_stdout
+
+import struct
+import os
+import ipaddress
+
+from datetime import datetime, timezone
+
 from ldap3 import Server, Connection, ALL, SUBTREE
 from ldap3.protocol.formatters.formatters import format_sid
 from colorama import Fore, Back, Style
 import code
 
+from impacket.ntlm import compute_nthash
+from impacket.krb5.ccache import CCache
+from impacket.krb5.kerberosv5 import getKerberosTGT
+from impacket.krb5.types import Principal
+from impacket.krb5.constants import PrincipalNameType
+
+from vars import GUIDS_DICT, ACE_TYPES, ACE_TYPES_EMOJI, ACCESS_MASK, AD_DEFAULTS
 import logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-logger.addHandler(logging.StreamHandler(sys.stdout))
 
-import argparse
-parser = argparse.ArgumentParser(description='Dump AD ACEs')
-parser.add_argument('-s', '--server', required=True, help='Domain controller IP/hostname')
-parser.add_argument('-u', '--username', required=True, help='Username')
-parser.add_argument('-p', '--password', help='Password')
-parser.add_argument('-d', '--domain', required=True, help='Domain name')
-parser.add_argument('-b', '--base-dn', help='Base DN (e.g., DC=domain,DC=com)')
-parser.add_argument('-k', '--kerberos', action='store_true', help='Use Kerberos authentication')
-parser.add_argument('-f', '--filter', help='LDAP filter')
-parser.add_argument('--hash', help='NTLM hash (LM:NT format)')
-parser.add_argument('--allsid', action='store_true', help='Include all SID (low rid/default)')
-parser.add_argument('--debug', action='store_true', help='Enable debug output')
-parser.add_argument('-i','--interact', action='store_true', help='Interact with python console with conn set')
-args = parser.parse_args()
 
-# Common AD GUIDs for property/extended rights
-PROPERTY_GUIDS = {
-    '00fbf30c-91fe-11d1-aebc-0000f80367c1': 'Alt-Security-Identities',
-    'bf967a86-0de6-11d0-a285-00aa003049e2': 'User-Password', 
-    'bf967a68-0de6-11d0-a285-00aa003049e2': 'User-Force-Change-Password',
-    'bf967950-0de6-11d0-a285-00aa003049e2': 'User-Account-Control',
-    'bf967a0a-0de6-11d0-a285-00aa003049e2': 'Service-Principal-Name',
-    'f3a64788-5306-11d1-a9c5-0000f80367c1': 'Service-Principal-Name',
-    'bf967a7f-0de6-11d0-a285-00aa003049e2': 'User-Principal-Name',
-    'bf967a9c-0de6-11d0-a285-00aa003049e2': 'User-Account-Control',
-    'bf967953-0de6-11d0-a285-00aa003049e2': 'User-Cert',
-    'bf967a05-0de6-11d0-a285-00aa003049e2': 'SAM-Account-Name',
-    'bf96797f-0de6-11d0-a285-00aa003049e2': 'Service-Principal-Name'
-}
-
-# Extended rights GUIDs
-EXTENDED_RIGHTS_GUIDS = {
-    '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2': 'DS-Replication-Get-Changes',
-    '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2': 'DS-Replication-Get-Changes-All',
-    '89e95b76-444d-4c62-991a-0facbeda640c': 'DS-Replication-Get-Changes-In-Filtered-Set',
-    '1131f6ac-9c07-11d1-f79f-00c04fc2dcd2': 'DS-Replication-Manage-Topology',
-    '00299570-246d-11d0-a768-00aa006e0529': 'User-Force-Change-Password',
-    'ab721a53-1e2f-11d0-9819-00aa0040529b': 'User-Change-Password',
-    '014bf69c-7b3b-11d1-85f6-08002be74fab': 'Add-GUID',
-    'cc17b1fb-33d9-11d2-97d4-00c04fd8d5cd': 'MS-Exch-Exchange-Information',
-    'b4e60130-df3f-11d1-9c86-006008764d0e': 'msmq-Receive-Dead-Letter',
-    'b4e60131-df3f-11d1-9c86-006008764d0e': 'msmq-Peek-Dead-Letter',
-    'b4e60132-df3f-11d1-9c86-006008764d0e': 'msmq-Receive-computer-Journal',
-    'b4e60133-df3f-11d1-9c86-006008764d0e': 'msmq-Peek-computer-Journal',
-    '06bd3200-df3e-11d1-9c86-006008764d0e': 'msmq-Receive',
-    '06bd3201-df3e-11d1-9c86-006008764d0e': 'msmq-Peek',
-    '06bd3202-df3e-11d1-9c86-006008764d0e': 'msmq-Send',
-    '06bd3203-df3e-11d1-9c86-006008764d0e': 'msmq-Receive-journal',
-    'a1990816-4298-11d1-ade2-00c04fd8d5cd': 'Open-Connector-Queue',
-    '1131f6ab-9c07-11d1-f79f-00c04fc2dcd2': 'DS-Replication-Get-Changes-All'
-}
-
-# ACE Types
-ACE_TYPES = {
-    0x00: 'ACCESS_ALLOWED_ACE',
-    0x01: 'ACCESS_DENIED_ACE',
-    0x02: 'SYSTEM_AUDIT_ACE',
-    0x03: 'SYSTEM_ALARM_ACE',
-    0x04: 'ACCESS_ALLOWED_COMPOUND_ACE',
-    0x05: 'ACCESS_ALLOWED_OBJECT_ACE',
-    0x06: 'ACCESS_DENIED_OBJECT_ACE',
-    0x07: 'SYSTEM_AUDIT_OBJECT_ACE',
-    0x08: 'SYSTEM_ALARM_OBJECT_ACE',
-    0x09: 'ACCESS_ALLOWED_CALLBACK_ACE',
-    0x0A: 'ACCESS_DENIED_CALLBACK_ACE',
-    0x0B: 'ACCESS_ALLOWED_CALLBACK_OBJECT_ACE',
-    0x0C: 'ACCESS_DENIED_CALLBACK_OBJECT_ACE',
-    0x0D: 'SYSTEM_AUDIT_CALLBACK_ACE',
-    0x0E: 'SYSTEM_ALARM_CALLBACK_ACE',
-    0x0F: 'SYSTEM_AUDIT_CALLBACK_OBJECT_ACE',
-    0x10: 'SYSTEM_ALARM_CALLBACK_OBJECT_ACE',
-    0x11: 'SYSTEM_MANDATORY_LABEL_ACE',
-    0x12: 'SYSTEM_RESOURCE_ATTRIBUTE_ACE',
-    0x13: 'SYSTEM_SCOPED_POLICY_ID_ACE'
-}
-
-# ACE Types Emoji
-ACE_TYPES_EMOJI = {
-    0x00: '✅',
-    0x01: '❌',
-    0x02: '🚨',
-    0x03: '🚨',
-    0x04: '✅',
-    0x05: '✅',
-    0x06: '❌',
-    0x07: '🚨',
-    0x08: '🚨',
-    0x09: '✅',
-    0x0A: '❌',
-    0x0B: '✅',
-    0x0C: '❌',
-    0x0D: '🚨',
-    0x0E: '🚨',
-    0x0F: '🚨',
-    0x10: '🚨',
-    0x11: 'SYSTEM_MANDATORY_LABEL_ACE',
-    0x12: 'SYSTEM_RESOURCE_ATTRIBUTE_ACE',
-    0x13: 'SYSTEM_SCOPED_POLICY_ID_ACE'
-}
-
-# Access mask flags
-ACCESS_MASK = {
-    0x00000001: 'ADS_RIGHT_DS_CREATE_CHILD',
-    0x00000002: 'ADS_RIGHT_DS_DELETE_CHILD', 
-    0x00000004: 'ADS_RIGHT_ACTRL_DS_LIST',
-    0x00000008: 'ADS_RIGHT_DS_SELF',
-    0x00000010: 'ADS_RIGHT_DS_READ_PROP',
-    0x00000020: 'ADS_RIGHT_DS_WRITE_PROP',
-    0x00000040: 'ADS_RIGHT_DS_DELETE_TREE',
-    0x00000080: 'ADS_RIGHT_DS_LIST_OBJECT',
-    0x00000100: 'ADS_RIGHT_DS_CONTROL_ACCESS',
-    0x00010000: 'DELETE',
-    0x00020000: 'READ_CONTROL',
-    0x00040000: 'WRITE_DAC',
-    0x00080000: 'WRITE_OWNER',
-    0x00100000: 'SYNCHRONIZE',
-    0x01000000: 'ACCESS_SYSTEM_SECURITY',
-    0x10000000: 'GENERIC_ALL',
-    0x20000000: 'GENERIC_EXECUTE',
-    0x40000000: 'GENERIC_WRITE',
-    0x80000000: 'GENERIC_READ'
-}
-
-collected_sids={}
-
+BANNER="""
+  █████╗  ██████╗███████╗██████╗ ██╗   ██╗███╗   ███╗██████╗ 
+ ██╔══██╗██╔════╝██╔════╝██╔══██╗██║   ██║████╗ ████║██╔══██╗
+ ███████║██║     █████╗  ██║  ██║██║   ██║██╔████╔██║██████╔╝
+ ██╔══██║██║     ██╔══╝  ██║  ██║██║   ██║██║╚██╔╝██║██╔═══╝ 
+ ██║  ██║╚██████╗███████╗██████╔╝╚██████╔╝██║ ╚═╝ ██║██║     
+ ╚═╝  ╚═╝ ╚═════╝╚══════╝╚═════╝  ╚═════╝ ╚═╝     ╚═╝╚═╝     
+            -- version 0.0.4 --
+"""
 
 interact_help="""
 ------------------------
@@ -146,6 +48,96 @@ ACEDump interactive mode
 ------------------------
 """
 
+def set_krb_config(server_domain):
+    krb_config =   '[libdefaults]' + '\n'
+    krb_config += f'default_realm = {server_domain}' + '\n'
+    krb_config += f'dns_canonicalize_hostname = false' + '\n'
+    krb_config += f'rdns = false' + '\n\n'
+
+    krb_config += f'[realms]' + '\n'
+    krb_config += f'{server_domain} = '+r'{' + '\n'
+    krb_config += f'kdc = {args.kdc}' + '\n'
+    krb_config += f'admin_server = {args.kdc}' + '\n'
+    krb_config += r'}' + '\n\n'
+
+    krb_config += f'[domain_realm]' + '\n'
+    krb_config += f'{server_domain} = {server_domain}' + '\n'
+    krb_config += f'.{server_domain} = {server_domain}' + '\n'
+
+    krb_config_file = '/tmp/krb.conf'
+
+    with open(krb_config_file, "w") as f:
+        f.write(krb_config)
+
+    os.environ["KRB5_CONFIG"] = krb_config_file
+
+    if args.verbose:
+        print(f"🛠️  KRB5_CONFIG saved to {krb_config_file}")
+
+def retrieve_tgt():
+    """Retrieve a Kerberos TGT and save it to a ccache file"""
+
+    try:
+        # Create user principal
+        user_principal = Principal(args.username, type=PrincipalNameType.NT_PRINCIPAL.value)
+
+        aesKey = None
+        nthash = ''
+        lmhash = ''
+
+        if args.hashes:
+            if len(args.hashes) == 32:
+                lmhash = bytes.fromhex('aad3b435b51404eeaad3b435b51404ee')
+                nthash = bytes.fromhex(args.hashes)
+            else:
+                aesKey = bytes.fromhex(args.hashes)
+        elif args.aes:
+            aesKey = str(args.aes)
+        elif not args.password:
+            lmhash = bytes.fromhex('aad3b435b51404eeaad3b435b51404ee')
+            nthash = bytes.fromhex('31d6cfe0d16ae931b73c59d7e0c089c0')  
+
+        # Get TGT
+        #freezer = freeze_time(ldap_currentTime)
+        #freezer.start()
+        if not args.dontfixtime:
+            fake_time_obj = fake_time(ldap_currentTime, tz_offset=0)
+            fake_time_obj.start()
+
+        tgt, cipher, old_session_key, session_key = getKerberosTGT(
+            clientName = user_principal,
+            password = args.password,
+            domain = args.domain,
+            lmhash = lmhash,
+            nthash = nthash,
+            aesKey = aesKey,
+            kdcHost = args.kdc,
+            serverName = None,
+        )
+
+        if not args.dontfixtime:
+            fake_time_obj.stop()
+
+        # Save ticket to ccache
+        ccache = CCache()
+        ccache.fromTGT(tgt, old_session_key, old_session_key)
+
+        # Ensure directory exists
+        ccache_dir = "/tmp"
+        os.makedirs(ccache_dir, exist_ok=True)
+        
+        ccache_file = f"{ccache_dir}/{args.username}.ccache"
+        ccache.saveFile(ccache_file)
+
+        if args.verbose:
+            print(f"✅ CCache saved to {ccache_file}")
+
+        os.environ["KRB5CCNAME"] = ccache_file
+        return
+
+    except Exception as e:
+        print(f"❌ Error retrieving TGT: {str(e)}")
+        raise
 
 def format_guid(guid_bytes):
     """Format GUID bytes to string"""
@@ -187,36 +179,42 @@ def parse_object_ace_flags(flags):
     if flags & 0x02: flag_names.append('ACE_INHERITED_OBJECT_TYPE_PRESENT')
     return flag_names
 
-def resolve_sid(conn, base_dn, sid):
-    if hasattr(collected_sids, sid):
-        return getattr(collected_sids, sid)
+def resolve_sid(conn):
+    #collected_sids
+    cookie = None
+    while True:
+        sd_search = conn.search(
+            search_base=args.base_dn,
+            search_filter='(objectSid=*)', 
+            search_scope=SUBTREE,
+            attributes=['sAMAccountName', 'name', 'objectClass','objectSid'],
+            paged_size=args.pagesize,
+            paged_cookie=cookie
+        )
 
-    search_filter = f'(objectSid={sid})'
-    conn.search(
-        search_base=base_dn,
-        search_filter=search_filter,
-        attributes=['sAMAccountName', 'name', 'objectClass']
-    )
+        if not sd_search:
+            break
 
-    if conn.entries:
-        entry = conn.entries[0]
-        name = entry.sAMAccountName.value or entry.name.value
-        obj_class = entry.objectClass.values if entry.objectClass else []
+        cookie = conn.result['controls']['1.2.840.113556.1.4.319']['value']['cookie']
+        for entry in conn.entries:
+            name = entry.sAMAccountName.value or entry.name.value
+            obj_class = entry.objectClass.values if entry.objectClass else []
 
-        obj_type = '⚙️' 
-        if 'computer' in obj_class :
-            obj_type = '💻'
-        elif 'user' in obj_class :
-            obj_type = '👤'
-        elif 'group' in obj_class:
-            obj_type = '📁'
+            obj_type = '⚙️' 
+            if 'computer' in obj_class :
+                obj_type = '💻'
+            elif 'user' in obj_class :
+                obj_type = '👤'
+            elif 'group' in obj_class:
+                obj_type = '📁'
 
-        collected_sids[sid]=f"{name} {obj_type}"
-        return collected_sids[sid]
-    else:
-        collected_sids[sid]=sid
-    
-    return sid
+            collected_sids[entry.objectSid.value]=f"{name} {obj_type}"
+
+        if not cookie:
+            break
+
+    if args.verbose:
+        print(f'✅ {len(collected_sids)} SID Resolved')
 
 def parse_security_descriptor(sd_bytes):
     """Parse security descriptor and extract ACEs - Fixed version"""
@@ -345,8 +343,7 @@ def parse_ace(ace_data):
                     if len(ace_data) >= offset + 16:
                         object_type_guid = format_guid(ace_data[offset:offset+16])
                         ace['object_type_guid'] = object_type_guid
-                        ace['object_type_name'] = PROPERTY_GUIDS.get(object_type_guid, 
-                        EXTENDED_RIGHTS_GUIDS.get(object_type_guid, 'Unknown'))
+                        ace['object_type_name'] = GUIDS_DICT.get(object_type_guid.lower(), object_type_guid.upper())
                         offset += 16
                     else:
                         logger.debug(f" Not enough data for object type GUID at offset {offset}")
@@ -356,7 +353,7 @@ def parse_ace(ace_data):
                     if len(ace_data) >= offset + 16:
                         inherited_object_type_guid = format_guid(ace_data[offset:offset+16])
                         ace['inherited_object_type_guid'] = inherited_object_type_guid
-                        ace['inherited_object_type_name'] = PROPERTY_GUIDS.get(inherited_object_type_guid, 'Unknown')
+                        ace['inherited_object_type_name'] = GUIDS_DICT.get(inherited_object_type_guid.lower(), inherited_object_type_guid.upper())
                         offset += 16
                     else:
                         logger.debug(f" Not enough data for inherited object type GUID at offset {offset}")
@@ -379,73 +376,146 @@ def parse_ace(ace_data):
     except Exception as e:
         logger.debug(f" Exception parsing ACE: {e}")
         return None
-    
-def connect():
-    # Connect to LDAP with detailed debugging
-    logger.debug(f"[*] Connecting to server: {args.server}")
-    srv = Server(args.server, get_info=ALL, port=389)
-    
-    logger.debug(f" Server info: {srv}")
-    
-    if args.kerberos:
-        logger.debug(f"[*] Using Kerberos authentication")
-        if args.password:
-            logger.debug(f"[*] Authenticating as: {args.username}@{args.domain}")
-            conn = Connection(srv, user=f'{args.username}@{args.domain}', password=args.password, authentication='SASL', sasl_mechanism='GSSAPI', auto_bind=False)
-        else:
-            logger.debug(f"[*] Using existing Kerberos tickets")
-            conn = Connection(srv, authentication='SASL', sasl_mechanism='GSSAPI', auto_bind=False)
-    else:
-        logger.debug(f"[*] Using NTLM authentication as: {args.domain}\\{args.username}")
-        conn = Connection(srv, user=f'{args.domain}\\{args.username}', password=args.password, authentication='NTLM', auto_bind=False)
-    
-    # Manual bind with error checking
-    logger.debug(f"[*] Attempting to bind to LDAP...")
-    bind_result = conn.bind()
-    if not bind_result:
-        logger.debug(f"[!] LDAP bind failed: {conn.last_error}")
-        logger.debug(f"[!] Result: {conn.result}")
+
+def is_valid_ip(address):
+    try:
+        ip = ipaddress.ip_address(address)
+        return True
+    except ValueError:
         return False
     
-    logger.debug(f"[+] Successfully bound to LDAP server")
-    logger.debug(f" Connection info: {conn}")
-    
-    # Test basic connectivity first
-    logger.debug(f"[*] Testing basic search...")
-    test_result = conn.search('', '(objectClass=*)', search_scope='BASE', attributes=['*'])
-    if not test_result:
-        logger.debug(f"[!] Basic search failed: {conn.last_error}")
-        logger.debug(f"[!] Result: {conn.result}")
-    else:
-        logger.debug(f"[+] Basic search successful")
-        if conn.entries:
-            logger.debug(f" Root DSE: {conn.entries[0]}")
-    
-    # Validate base DN
-    logger.debug(f"[*] Validating base DN: {args.base_dn}")
-    base_test = conn.search(args.base_dn, '(objectClass=*)', search_scope='BASE', attributes=['distinguishedName'])
-    if not base_test:
-        logger.debug(f"[!] Base DN validation failed: {conn.last_error}")
-        logger.debug(f"[!] Result: {conn.result}")
-        logger.debug(f"[!] Trying alternative base DN...")
-        
-        # Try to find the correct base DN
-        domain_parts = args.domain.split('.')
-        alt_base_dn = ','.join([f'DC={part}' for part in domain_parts])
-        logger.debug(f"[*] Trying alternative base DN: {alt_base_dn}")
-        
-        base_test = conn.search(alt_base_dn, '(objectClass=*)', search_scope='BASE', attributes=['distinguishedName'])
-        if base_test:
-            args.base_dn = alt_base_dn
-            logger.debug(f"[+] Using base DN: {args.base_dn}")
+def connect():
+    """Connect to server and return conn"""
+
+    # Handle NTLM hash
+    if not args.kerberos:
+        if args.password:
+            args.password = f"aad3b435b51404eeaad3b435b51404ee:{compute_nthash(args.password).hex()}"
+        elif args.hashes:
+            args.password = f"aad3b435b51404eeaad3b435b51404ee:{args.hashes}"
         else:
-            logger.debug(f"[!] Alternative base DN also failed")
-            return False
+            args.password = f"aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0"
+            
+    if not args.port:
+        if args.tls:
+            args.port=636
+        else:
+            args.port=389
+
+    # Anonymous bind to retrieve informations about server
+    srv = Server(args.server.upper(), get_info=ALL, port=args.port, use_ssl=args.tls)
+    conn = Connection(srv, auto_bind=True)
+    conn_test = conn.search('', '(objectClass=*)', search_scope='BASE', attributes=['defaultNamingContext','currentTime','serverName'], size_limit=1)
+    if not conn_test:
+        print("❌ Basic search failed in anonymous context")
+        print(conn.last_error)
+        print(conn.result)
+        return False
+
+    #default_naming_context = conn.entries[0].defaultNamingContext.value
+
+    if args.verbose:
+        print(f"✅ Anonymous bind : {srv}")
+    
+    # Retrieve domain, potential hostname and time
+    ldap_currentTime_value = srv.info.other.get('currentTime')[0]
+    default_naming_context = srv.info.other.get('defaultNamingContext')[0]
+    serverName = srv.info.other.get('serverName')[0]
+
+    server_domain = str('.'.join([dc.split('=')[1] for dc in default_naming_context.split(',') if dc.startswith('DC=')])).upper()
+    serverName = f"{serverName.split(',')[0].split('=')[1]}.{server_domain}".upper()
+
+    global ldap_currentTime
+    ldap_currentTime = datetime.strptime(ldap_currentTime_value, "%Y%m%d%H%M%S.0Z") # .replace(tzinfo=timezone.utc)
+    clock_skew = datetime.now() - ldap_currentTime
+    if int(clock_skew.total_seconds()) > 5 :
+        print(f"⚠️  LDAP clock in past : {ldap_currentTime} ({clock_skew.total_seconds()} seconds)")
+    elif int(clock_skew.total_seconds()) < -5 :
+        print(f"⚠️  LDAP clock in futur : {ldap_currentTime} ({clock_skew.total_seconds()} seconds)")
     else:
-        logger.debug(f"[+] Base DN validated successfully")
+        if args.verbose:
+            print(f"✅ Synced with LDAP clock : {ldap_currentTime} ({clock_skew.total_seconds()} seconds)")
+
+    # Set basedn if missing
+    if not args.base_dn:
+        args.base_dn = default_naming_context
+    
+    # Set domain if missing
+    if not args.domain:
+        args.domain = server_domain
+
+    if args.kerberos:
+        args.server = serverName
+
+        # Specified KDC
+        if args.kdc:
+            args.kdc = args.kdc.upper()
+
+        # KDC from server value
+        elif not is_valid_ip(args.server):
+            args.kdc = args.server
+
+        if args.verbose:
+            print(f"🛠️  KDC : {args.kdc}")
+
+        krb_config_file = os.environ.get("KRB5_CONFIG")
+        if not krb_config_file:
+            set_krb_config(server_domain)
+
+        srv = Server(args.server, get_info=ALL, port=args.port, use_ssl=args.tls)
+
+        # Using credentials if specified
+        if args.password or args.hashes or args.aes:
+            retrieve_tgt()
+            conn = Connection(srv, authentication='SASL', sasl_mechanism='GSSAPI', auto_bind=False)
+        else:
+            ccache_file = os.environ.get("KRB5CCNAME")
+            if not ccache_file:
+                print(f"⚠️  Undefined KRB5CCNAME and no credentials given, login with blank password ...")
+                retrieve_tgt()
+            conn = Connection(srv, authentication='SASL', sasl_mechanism='GSSAPI', auto_bind=False)
+        
+    else:
+        conn = Connection(srv, user=f'{args.domain}\\{args.username}', password=args.password, authentication='NTLM', auto_bind=False)
+
+    # Bind
+    if not args.dontfixtime:
+        fake_time_obj = fake_time(ldap_currentTime, tz_offset=0)
+        fake_time_obj.start()
+
+    bind_result = conn.bind()
+
+    if not args.dontfixtime:
+        fake_time_obj.stop()
+
+    if not bind_result:
+        print(f"❌ LDAP bind failed \n{conn.last_error}\n{conn.result}")
+        return False
+    
+    if args.verbose:
+        print(f"✅ Authenticated : {srv}")
+
+    # First query
+    conn_test = conn.search('', '(objectClass=*)', search_scope='BASE', attributes=['distinguishedName'], size_limit=1)
+    if not conn_test:
+        print("❌ Basic search failed")
+        print(conn.last_error)
+        print(conn.result)
+        return False
+
+    # Validate base DN
+    base_test = conn.search(args.base_dn, '(objectClass=*)', search_scope='BASE', attributes=['distinguishedName'], size_limit=1)
+    if not base_test:
+        print("❌ Invalid default naming context (baseDN)")
+        return False
+
+    if args.verbose:
+        print(f"✅ Valid DN : {args.base_dn}")
+    
     return conn
 
 def parse_sd_search_results(conn):
+    """Parse LDAP pages"""
     for entry in conn.entries:
         if hasattr(entry, 'nTSecurityDescriptor') and entry.nTSecurityDescriptor:
             sd_bytes = entry.nTSecurityDescriptor.raw_values[0]
@@ -467,7 +537,13 @@ def parse_sd_search_results(conn):
                     if not args.allsid and int(ace['trustee_sid'].split('-')[-1]) < 1000:
                         continue
 
-                    trustee = resolve_sid(conn, args.base_dn, ace['trustee_sid'])
+                    if ace['trustee_sid'] in collected_sids:
+                        trustee = collected_sids[ace['trustee_sid']]
+                    else:
+                        trustee = ace['trustee_sid']
+                    
+                    if not args.allsid and trustee in AD_DEFAULTS:
+                        continue
 
                     target_object = ace.get('object_type_name', ace.get('object_type_guid', 'Any Property'))
                     #target_inherited_object = ace.get('inherited_object_type_name', ace.get('object_type_guid', 'ALL'))
@@ -505,88 +581,79 @@ def parse_sd_search_results(conn):
 def dump_aces(conn, filter):
     """Dump all ACEs from AD objects"""
 
-    #print("\n"+"-" * 80)
-    print(Style.BRIGHT + Fore.YELLOW)
-    print(f"-- Searching objects ... filter: '{filter}'  basedn: '{args.base_dn}'")
-    print(Style.RESET_ALL, end='')
+    if args.debug:
+        print(Style.BRIGHT + Fore.YELLOW)
+        print(f"-- Searching objects ... filter: '{filter}'  basedn: '{args.base_dn}'")
+        print(Style.RESET_ALL, end='')
     
-    # Try search without security descriptor first to test basic functionality
-    logger.debug(f"[*] Testing basic object search...")
-    basic_search = conn.search(
-        args.base_dn, filter, 
-        search_scope=SUBTREE,
-        attributes=['distinguishedName', 'objectClass', 'sAMAccountName'],
-        size_limit=1
-    )
-    
-    if not basic_search:
-        logger.debug(f"[!] Basic search failed: {conn.last_error}")
-        logger.debug(f"[!] Result: {conn.result}")
-        return False
-    
-    logger.debug(f"[+] Basic search found {len(conn.entries)} objects")
-    if conn.entries:
-        for i, entry in enumerate(conn.entries[:3]):  # Show first 3
-            logger.debug(f" Entry {i}: {entry.distinguishedName}")
-    
-    # Now try with security descriptors
-    logger.debug(f"[*] Searching with security descriptors...")
-    controls = [('1.2.840.113556.1.4.801', True, bytearray([0x30, 0x03, 0x02, 0x01, 0x07]))]
-    sd_search = conn.search(
-        search_base=args.base_dn,
-        search_filter=filter, 
-        search_scope=SUBTREE,
-        attributes=['nTSecurityDescriptor', 'distinguishedName', 'objectClass', 'sAMAccountName'],
-        paged_size=50,
-        controls=controls
-    )
+    # Searching with security descriptors
+    cookie = None
 
-    if not sd_search:
-        return
-
-    cookie = conn.result['controls']['1.2.840.113556.1.4.319']['value']['cookie']
-    parse_sd_search_results(conn)
-    
-    while cookie and sd_search:
+    while True:
         controls = [('1.2.840.113556.1.4.801', True, bytearray([0x30, 0x03, 0x02, 0x01, 0x07]))]
         sd_search = conn.search(
             search_base=args.base_dn,
             search_filter=filter, 
             search_scope=SUBTREE,
             attributes=['nTSecurityDescriptor', 'distinguishedName', 'objectClass', 'sAMAccountName'],
-            paged_size=50,
+            paged_size=int(args.pagesize),
             controls=controls,
-            paged_cookie = cookie
+            paged_cookie=cookie
         )
+
+        if not sd_search:
+            break
+
         cookie = conn.result['controls']['1.2.840.113556.1.4.319']['value']['cookie']
         parse_sd_search_results(conn)
+
+        if not cookie:
+            break
         
 def main():
+
+    global logger
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(logging.StreamHandler(sys.stdout))
+
+    import argparse
+    parser = argparse.ArgumentParser(description='Dump AD ACEs')
+    parser.add_argument('-s', '--server', required=True, help='Domain controller IP/hostname')
+    parser.add_argument('-u', '--username', required=True, help='Username')
+    parser.add_argument('-p', '--password', help='Password')
+    parser.add_argument('-d', '--domain', help='Domain name')
+    parser.add_argument('-b', '--base-dn', help='Base DN (e.g., DC=domain,DC=com)')
+    parser.add_argument('-k', '--kerberos', action='store_true', help='Use Kerberos authentication')
+    parser.add_argument('--tls', action='store_true', help='Use TLS')
+    parser.add_argument('-f', '--filter', help='LDAP filter')
+    parser.add_argument('-H','--hashes', '--nt', help='NT hash')
+    parser.add_argument('--aes', help='AES hash')
+    parser.add_argument('--kdc', help='KDC FQDN')
+    parser.add_argument('--port', help='LDAP port')
+    parser.add_argument('-i','--interact', action='store_true', help='Connect and spawn python console')
+    parser.add_argument('--dontfixtime', action='store_true', help="Don't fix clock skew")
+    parser.add_argument('--pagesize', help='Size of pagination, default:500', default=500)
+    parser.add_argument('-v','--verbose', action='store_true', help='Enable verbose')
+    parser.add_argument('--debug', action='store_true', help="Enable debug output (you don't want to use this)")
+    parser.add_argument('--allsid', action='store_true', help='Include all SID (low and default RIDs)')
+
+    global args
+    args = parser.parse_args()
+
+    print(BANNER)
+
     if args.debug:
         logger.setLevel(logging.DEBUG)
-    
-    # Set base DN if not provided
-    if not args.base_dn:
-        domain_parts = args.domain.split('.')
-        args.base_dn = ','.join([f'DC={part}' for part in domain_parts])
-    
-    # Handle hash authentication
-    if args.hash:
-        if ':' in args.hash:
-            lm_hash, nt_hash = args.hash.split(':')
-            args.password = f"aad3b435b51404eeaad3b435b51404ee:{nt_hash}"
-        else:
-            args.password = f"aad3b435b51404eeaad3b435b51404ee:{args.hash}"
-    
-    if not args.password and not args.kerberos:
-        print("[!] Password or hash required (unless using Kerberos with existing tickets)")
-        sys.exit(1)
-    
-    logger.debug(f"[*] Target: {args.server}")
-    logger.debug(f"[*] Domain: {args.domain}")
-    logger.debug(f"[*] User: {args.username}")
-    logger.debug(f"[*] Base DN: {args.base_dn}")
-    logger.debug(f"[*] Debug: {'Enabled' if args.debug else 'Disabled'}")
+
+    if args.hashes :
+        # Split hash if lm:nt
+        if ':' in args.hashes:
+            args.hashes = args.hashes.split(':')[1]
+
+        # Swith to kerberos if AES hash in the NT hash argument
+        if len(args.hashes)>32:
+            args.kerberos = True
     
     conn = connect()
     if not conn:
@@ -597,12 +664,24 @@ def main():
         code.interact(local={**globals(), **locals()})
         return
     
+    global collected_sids
+    collected_sids={}
+    resolve_sid(conn)
+    
     if args.filter:
         dump_aces(conn, args.filter)
     else:
+
+        print(Style.BRIGHT + Fore.YELLOW + f"\n-- OTHER --" + Style.RESET_ALL)
         dump_aces(conn, '(!(|(objectClass=user)(objectClass=computer)(objectClass=group)))')
+
+        print(Style.BRIGHT + Fore.YELLOW + f"\n-- GROUP --" + Style.RESET_ALL)
         dump_aces(conn, '(|(objectClass=group))')
+
+        print(Style.BRIGHT + Fore.YELLOW + f"\n-- COMPUTER --" + Style.RESET_ALL)
         dump_aces(conn, '(|(objectClass=computer))')
+
+        print(Style.BRIGHT + Fore.YELLOW + f"\n-- USER --" + Style.RESET_ALL)
         dump_aces(conn, '(|(objectClass=user))')
     
     conn.unbind()
