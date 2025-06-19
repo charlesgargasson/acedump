@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-# https://learn.microsoft.com/en-us/windows/win32/api/iads/ne-iads-ads_rights_enum
-
 from io import StringIO
 import sys
 
@@ -28,7 +26,7 @@ from impacket.krb5.kerberosv5 import getKerberosTGT
 from impacket.krb5.types import Principal
 from impacket.krb5.constants import PrincipalNameType
 
-from vars import GUIDS_DICT, ACE_TYPES, ACE_TYPES_EMOJI, ACCESS_MASK, AD_DEFAULTS
+from src.vars import GUIDS_DICT, ACE_TYPES, ACE_TYPES_EMOJI, ACCESS_MASK, AD_DEFAULTS
 import logging
 
 
