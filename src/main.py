@@ -26,25 +26,8 @@ from impacket.krb5.kerberosv5 import getKerberosTGT
 from impacket.krb5.types import Principal
 from impacket.krb5.constants import PrincipalNameType
 
-from src.vars import GUIDS_DICT, ACE_TYPES, ACE_TYPES_EMOJI, ACCESS_MASK, AD_DEFAULTS
+from src.vars import GUIDS_DICT, ACE_TYPES, ACE_TYPES_EMOJI, ACCESS_MASK, AD_DEFAULTS, BANNER, INTERACTIVE_HELP, SID_DICT
 import logging
-
-
-BANNER="""
-  █████╗  ██████╗███████╗██████╗ ██╗   ██╗███╗   ███╗██████╗ 
- ██╔══██╗██╔════╝██╔════╝██╔══██╗██║   ██║████╗ ████║██╔══██╗
- ███████║██║     █████╗  ██║  ██║██║   ██║██╔████╔██║██████╔╝
- ██╔══██║██║     ██╔══╝  ██║  ██║██║   ██║██║╚██╔╝██║██╔═══╝ 
- ██║  ██║╚██████╗███████╗██████╔╝╚██████╔╝██║ ╚═╝ ██║██║     
- ╚═╝  ╚═╝ ╚═════╝╚══════╝╚═════╝  ╚═════╝ ╚═╝     ╚═╝╚═╝     
-            -- version 0.0.4 --
-"""
-
-interact_help="""
-------------------------
-ACEDump interactive mode
-------------------------
-"""
 
 def set_krb_config(server_domain):
     krb_config =   '[libdefaults]' + '\n'
@@ -178,7 +161,6 @@ def parse_object_ace_flags(flags):
     return flag_names
 
 def resolve_sid(conn):
-    #collected_sids
     cookie = None
     while True:
         sd_search = conn.search(
@@ -196,23 +178,27 @@ def resolve_sid(conn):
         cookie = conn.result['controls']['1.2.840.113556.1.4.319']['value']['cookie']
         for entry in conn.entries:
             name = entry.sAMAccountName.value or entry.name.value
+            if not name:
+                continue
+
             obj_class = entry.objectClass.values if entry.objectClass else []
 
-            obj_type = '⚙️' 
+            obj_type = '⚙️ ' 
             if 'computer' in obj_class :
                 obj_type = '💻'
             elif 'user' in obj_class :
                 obj_type = '👤'
             elif 'group' in obj_class:
                 obj_type = '📁'
-
-            collected_sids[entry.objectSid.value]=f"{name} {obj_type}"
+                
+            if not entry.objectSid.value in SID_DICT.keys():
+                SID_DICT[entry.objectSid.value]=f"{name} {obj_type}"
 
         if not cookie:
             break
 
     if args.verbose:
-        print(f'✅ {len(collected_sids)} SID Resolved')
+        print(f'✅ {len(SID_DICT)} SID Resolved')
 
 def parse_security_descriptor(sd_bytes):
     """Parse security descriptor and extract ACEs - Fixed version"""
@@ -504,7 +490,7 @@ def connect():
     # Validate base DN
     base_test = conn.search(args.base_dn, '(objectClass=*)', search_scope='BASE', attributes=['distinguishedName'], size_limit=1)
     if not base_test:
-        print("❌ Invalid default naming context (baseDN)")
+        print(f"❌ Can't search DN : {args.base_dn}")
         return False
 
     if args.verbose:
@@ -535,8 +521,8 @@ def parse_sd_search_results(conn):
                     if not args.allsid and int(ace['trustee_sid'].split('-')[-1]) < 1000:
                         continue
 
-                    if ace['trustee_sid'] in collected_sids:
-                        trustee = collected_sids[ace['trustee_sid']]
+                    if ace['trustee_sid'] in SID_DICT.keys():
+                        trustee = SID_DICT[ace['trustee_sid']]
                     else:
                         trustee = ace['trustee_sid']
                     
@@ -658,12 +644,10 @@ def main():
         return
     
     if args.interact:
-        print(interact_help)
+        print(INTERACTIVE_HELP)
         code.interact(local={**globals(), **locals()})
         return
     
-    global collected_sids
-    collected_sids={}
     resolve_sid(conn)
     
     if args.filter:

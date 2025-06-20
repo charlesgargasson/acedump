@@ -1,0 +1,38 @@
+# Searching with security descriptors
+
+import uuid
+
+cookie = None
+guid_map = {}
+
+while True:
+    sd_search = conn.search(
+        search_base='CN=Schema,CN=Configuration,DC=vintage,DC=htb',
+        search_filter='(|(objectClass=attributeSchema)(objectClass=classSchema))', 
+        search_scope=SUBTREE,
+        attributes=['lDAPDisplayName','schemaIDGUID'],
+        paged_size=500,
+        paged_cookie=cookie
+    )
+    if not sd_search:
+        break
+    cookie = conn.result['controls']['1.2.840.113556.1.4.319']['value']['cookie']
+    print(len(conn.entries))
+    for entry in conn.entries:
+        if not hasattr(entry, 'lDAPDisplayName') or not hasattr(entry, 'schemaIDGUID'):
+            continue
+        name = str(entry.lDAPDisplayName)
+        guid_bytes = entry.schemaIDGUID.value
+        if name == None or guid_bytes == None:
+            continue
+        guid = str(uuid.UUID(bytes=guid_bytes))
+        guid_map[guid] = name
+    if not cookie:
+        break
+
+for k,v in guid_map.items():
+    print(f"'{k}': '{v}',")
+
+for k,v in GUIDS_DICT.items():
+    print(f"'{k}': '{v}',")
+    
