@@ -23,24 +23,28 @@ Getting Started
 
 .. code-block::
 
+    options:
     -h, --help            show this help message and exit
     -s SERVER, --server SERVER
-                        Domain controller IP or FQDN
+                            Domain controller IP/hostname
     -u USERNAME, --username USERNAME
-                        Username
+                            Username
     -p PASSWORD, --password PASSWORD
-                        Password
+                            Password
     -d DOMAIN, --domain DOMAIN
-                        Domain name
+                            Domain name
     -b BASE_DN, --base-dn BASE_DN
-                        Base DN (e.g., DC=domain,DC=com)
+                            Base DN, e.g. DC=domain,DC=com
     -k, --kerberos        Use Kerberos authentication
     --tls                 Use TLS
     -f FILTER, --filter FILTER
-                        LDAP filter
-    -H HASHES, --hashes HASHES, --nt HASHES
-                        NT hash
+                            LDAP filter, e.g. (|(objectClass=user))
+    -H HASHES, --hashes HASHES, --nthash HASHES
+                            NT hash
     --aes AES             AES hash
+    --cert CERT           Certificate file
+    --certkey CERTKEY     Key file
+    --certpass CERTPASS   Certificate password if any
     --kdc KDC             KDC FQDN
     --port PORT           LDAP port
     -i, --interact        Connect and spawn python console
@@ -62,20 +66,43 @@ Getting Started
 Credentials
 ***********
 
-| ACEDump support kerberos CCache using ldap3, and AES/NTHash using impacket.
+| ACEDump support NTLM, Kerberos, X509 certificates, NT hash, AES hash, user/password.
 | If you don't provide any hash or password, ACEDump will try a blank password.
+| Kerberos auth require valid DNS entry for targeted DC.
 
 .. code-block:: bash
 
-    # CCACHE
+    # Kerberos CCACHE
     export KRB5CCNAME='USER.ccache'
-    acedump -k -s DC01.BOX.HTB -u USER -d BOX.HTB
+    acedump -v -k -s DC01.BOX.HTB -u USER -d BOX.HTB 
 
-    # NTHash
-    acedump -k -s DC01.BOX.HTB -u USER -d BOX.HTB -H 31d6cfe0d16ae931b73c59d7e0c089c0
+    # Kerberos NTHash (etype23)
+    acedump -v -k -s DC01.BOX.HTB -u USER -d BOX.HTB -H 31d6cfe0d16ae931b73c59d7e0c089c0
 
-    # AES
-    acedump -k -s DC01.BOX.HTB -u USER -d BOX.HTB --aes 910e4c922b7516d4a17f05b5ae6a147578564284fff8461a02298ac9263bc913
+    # Kerberos AES
+    acedump -v -k -s DC01.BOX.HTB -u USER -d BOX.HTB --aes 910e4c922b7516d4a17f05b5ae6a147578564284fff8461a02298ac9263bc913
+
+    # Kerberos user/password
+    acedump -v -k -s DC01.BOX.HTB -u USER -d BOX.HTB -p 'FooBar_123'
+
+    # Certificate X509 PEM format (no pfx support yet)
+    acedump -v -s DC01.BOX.HTB -u USER -d BOX.HTB --cert user.crt --certkey user.key
+
+    # NTLM (password or hash)
+    acedump -v -s DC01.BOX.HTB -u USER -d BOX.HTB -H 31d6cfe0d16ae931b73c59d7e0c089c0
+    acedump -v -s DC01.BOX.HTB -u USER -d BOX.HTB -p 'FooBar_123'
+
+    # Anonymous (untested)
+    acedump -v -s DC01.BOX.HTB
+
+|
+
+***************
+Certificate/TLS
+***************
+
+| ACEDump support user certificate with StartTLS (389)
+| I currently have issues with TLS (636) 
 
 |
 
@@ -83,8 +110,8 @@ Credentials
 NTP
 ***
 
-| ACEDump mock LDAP's clock using currentTime attribute and libfaketime.
-| Use dontfixtime option if you want to deal with clock skew by yourself
+| ACEDump mock LDAP's clock using currentTime attribute and libfaketime (there is no NTP request).
+| Use dontfixtime option if you want to deal with clock skew by yourself.
 
 |
 
@@ -99,7 +126,7 @@ Interactive
 
 .. code-block:: bash
 
-    $ acedump -s 10.129.231.205 -u P.Rosa -p Rosaisbest123 -k -i -v
+    $ acedump -s 10.129.231.205 -u USER -p Password123 -k -i -v
 
       █████╗  ██████╗███████╗██████╗ ██╗   ██╗███╗   ███╗██████╗ 
      ██╔══██╗██╔════╝██╔════╝██╔══██╗██║   ██║████╗ ████║██╔══██╗
@@ -111,11 +138,11 @@ Interactive
 
     ✅ Anonymous bind : ldap://10.129.231.205:389 - cleartext
     ⚠️  LDAP clock in past : 2025-06-20 18:19:09 (7199.408678 seconds)
-    🛠️  KDC : DC01.VINTAGE.HTB
+    🛠️  KDC : DC01.BOX.HTB
     🛠️  KRB5_CONFIG saved to /tmp/krb.conf
-    ✅ CCache saved to /tmp/P.Rosa.ccache
-    ✅ Authenticated : ldap://DC01.VINTAGE.HTB:389 - cleartext
-    ✅ Valid DN : DC=vintage,DC=htb
+    ✅ CCache saved to /tmp/USER.ccache
+    ✅ Authenticated : ldap://DC01.BOX.HTB:389 - cleartext
+    ✅ Valid DN : DC=BOX,DC=htb
 
     ------------------------
     ACEDump interactive mode
@@ -125,7 +152,7 @@ Interactive
     Type "help", "copyright", "credits" or "license" for more information.
     (InteractiveConsole)
     >>> print(conn)
-    ldap://DC01.VINTAGE.HTB:389 - cleartext - user: None - not lazy - bound - open - <local: 10.10.14.182:54201 - remote: 10.129.231.205:389> - tls not started - listening - SyncStrategy - internal decoder
+    ldap://DC01.BOX.HTB:389 - cleartext - user: None - not lazy - bound - open - <local: 10.10.14.182:54201 - remote: 10.129.231.205:389> - tls not started - listening - SyncStrategy - internal decoder
 
 |
 
@@ -146,5 +173,14 @@ Interactive
     import ldap3
     conn.modify(target_dn,{'altSecurityIdentities':[(ldap3.MODIFY_ADD, altSecurityIdentities)]})
     # Return True if changed
+
+|
+
+| Example to search user using SamAccountName attribute
+
+.. code-block:: bash
+
+    conn.search(args.base_dn, '(SamAccountName=johndoe)', attributes=['*'])
+    conn.entries
 
 |
