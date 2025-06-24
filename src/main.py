@@ -16,7 +16,6 @@ import ipaddress
 from datetime import datetime, timezone
 
 import ldap3
-from ldap3 import Server, Connection, ALL, SUBTREE, Tls, SASL, EXTERNAL
 from ldap3.protocol.formatters.formatters import format_sid
 from colorama import Fore, Back, Style
 import code
@@ -168,7 +167,7 @@ def resolve_sid(conn):
         sd_search = conn.search(
             search_base=args.base_dn,
             search_filter='(objectSid=*)', 
-            search_scope=SUBTREE,
+            search_scope=ldap3.SUBTREE,
             attributes=['sAMAccountName', 'name', 'objectClass','objectSid'],
             paged_size=args.pagesize,
             paged_cookie=cookie
@@ -200,7 +199,7 @@ def resolve_sid(conn):
             break
 
     if args.verbose:
-        print(f'✅ {len(SID_DICT)} SID Resolved')
+        print(f'✅ {len(SID_DICT)} SIDs Resolved')
 
 def parse_security_descriptor(sd_bytes):
     """Parse security descriptor and extract ACEs - Fixed version"""
@@ -379,20 +378,34 @@ def connect():
         else:
             args.port=389
 
-    # Anonymous bind to retrieve informations about server
-    srv = Server(args.server.upper(), get_info=ALL, port=args.port, use_ssl=args.tls)
-    conn = Connection(srv, auto_bind=True)
+    srv = ldap3.Server(args.server.upper(), get_info=ldap3.ALL, port=args.port, use_ssl=args.tls)
+    if args.cert :
+        srv.tls = ldap3.Tls(
+            local_private_key_file=args.certkey,
+            local_private_key_password=args.certpass,
+            local_certificate_file=args.cert,
+            validate=ssl.CERT_NONE,
+            version=ssl.PROTOCOL_TLS_CLIENT,
+            ciphers="ALL:@SECLEVEL=0",
+            ssl_options=[ssl.OP_ALL],
+        )
+    else:
+        srv.tls = ldap3.Tls(
+            validate=ssl.CERT_NONE,
+            version=ssl.PROTOCOL_TLS_CLIENT,
+            ciphers="ALL:@SECLEVEL=0",
+            ssl_options=[ssl.OP_ALL],
+        )
+
+    # Retrieve informations about server
+    conn = ldap3.Connection(srv, auto_bind=True)
     conn_test = conn.search('', '(objectClass=*)', search_scope='BASE', attributes=['defaultNamingContext','currentTime','serverName'], size_limit=1)
     if not conn_test:
-        print("❌ Basic search failed in anonymous context")
-        print(conn.last_error)
-        print(conn.result)
+        print(f"❌ Error searching Root DSE \nconn.last_error : {conn.last_error}\nconn.result : {conn.result}")
         return False
 
-    #default_naming_context = conn.entries[0].defaultNamingContext.value
-
     if args.verbose:
-        print(f"✅ Anonymous bind : {srv}")
+        print(f"✅ Valid Root DSE for {srv}")
     
     # Retrieve domain, potential hostname and time
     ldap_currentTime_value = srv.info.other.get('currentTime')[0]
@@ -421,26 +434,16 @@ def connect():
     if not args.domain:
         args.domain = server_domain
 
-    if args.cert :
-        tls_configuration = Tls(
-            local_private_key_file=args.certkey,
-            local_private_key_password=args.certpass,
-            local_certificate_file=args.cert,
-            validate=ssl.CERT_NONE,
-            version=ssl.PROTOCOL_TLS,
-        )
-    else:
-        tls_configuration = None
-
-
+    # Handle TLS + Cert
     if args.cert and args.tls:
-        # TLS
-        #conn = Connection(srv, authentication=ldap3.SASL, sasl_mechanism=ldap3.EXTERNAL, auto_bind=ldap3.AUTO_BIND_TLS_BEFORE_BIND, raise_exceptions=True, sasl_credentials='')
-        #conn = Connection(srv, authentication=SASL, sasl_mechanism='EXTERNAL', sasl_credentials=())
-        conn = Connection(srv)
+        conn = ldap3.Connection(srv)
 
+    # Kerberos
     elif args.kerberos:
+        # Kerberos need the server name
         args.server = serverName
+        srv.host = args.server
+        conn = ldap3.Connection(srv, authentication='SASL', sasl_mechanism='GSSAPI', auto_bind=False)
 
         # Specified KDC
         if args.kdc:
@@ -457,20 +460,20 @@ def connect():
         if not krb_config_file:
             set_krb_config(server_domain)
 
-        srv = Server(args.server, get_info=ALL, port=args.port, use_ssl=args.tls, tls=tls_configuration)
-
         # Using credentials if specified
         if args.password or args.hashes or args.aes:
             retrieve_tgt()
         else:
             ccache_file = os.environ.get("KRB5CCNAME")
-            if not ccache_file:
-                print(f"⚠️  Undefined KRB5CCNAME and no credentials, login with blank password ...")
+            if not ccache_file and args.username:
+                print(f"⚠️  Undefined KRB5CCNAME and no given password, login with blank password ...")
                 retrieve_tgt()
-        conn = Connection(srv, authentication='SASL', sasl_mechanism='GSSAPI', auto_bind=False)
-        
+            else:
+                print(f"⚠️  No credentials were supplied, login as anonymous ...")
+                conn = ldap3.Connection(srv, authentication='ANONYMOUS')
+
+    # NTLM / OTHER
     else:
-        srv = Server(args.server, get_info=ALL, port=args.port, use_ssl=args.tls, tls=tls_configuration)
 
         # Handles hashes for NTLM
         if args.password:
@@ -480,32 +483,33 @@ def connect():
         elif not args.cert and args.username :
             args.password = f"aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0"
 
-        if args.cert and not args.tls:
-            # Auth + StartTLS
+        # Cert without TLS
+        if args.cert:
+            # NTLM Auth + StartTLS
             if args.password and args.username :
-                conn = Connection(srv, user=f'{args.domain}\\{args.username}', password=args.password, authentication='NTLM', auto_bind=False)
+                conn = ldap3.Connection(srv, user=f'{args.domain}\\{args.username}', password=args.password, authentication='NTLM', auto_bind=False)
            
-            # Specify Username for StartTLS (Doesn't seems to work)
-            elif args.username :
-                conn = Connection(srv, user=f'{args.domain}\\{args.username}', authentication='SASL', sasl_mechanism='EXTERNAL', sasl_credentials=(), auto_bind=False)
+            # StartTLS with user DN
+            elif args.userdn :
+                conn = ldap3.Connection(srv, authentication='SASL', sasl_mechanism='EXTERNAL', sasl_credentials=f"{args.userdn}", auto_bind=False)
             
-            # Cert only
+            # StartTLS
             else:
-                conn = Connection(srv, authentication='SASL', sasl_mechanism='EXTERNAL', sasl_credentials=(), auto_bind=False)
+                conn = ldap3.Connection(srv, authentication='SASL', sasl_mechanism='EXTERNAL', sasl_credentials=(), auto_bind=False)
        
         else:
             # Usual NTLM auth
             if args.password and args.username :
-                conn = Connection(srv, user=f'{args.domain}\\{args.username}', password=args.password, authentication='NTLM', auto_bind=False)
+                conn = ldap3.Connection(srv, user=f'{args.domain}\\{args.username}', password=args.password, authentication='NTLM', auto_bind=False)
 
             # Blank password
             elif args.username :
                 print(f"⚠️  Login with blank password ...")
-                conn = Connection(srv, user=f'{args.domain}\\{args.username}', password=args.password, authentication='NTLM', auto_bind=False)
+                conn = ldap3.Connection(srv, user=f'{args.domain}\\{args.username}', password=args.password, authentication='NTLM', auto_bind=False)
 
             else:
-                print(f"⚠️  No credentials, login as anonymous ...")
-                conn = Connection(srv, authentication='ANONYMOUS')
+                print(f"⚠️  No credentials were supplied, login as anonymous ...")
+                conn = ldap3.Connection(srv, authentication='ANONYMOUS')
 
     # Fix clock skew
     if not args.dontfixtime:
@@ -513,7 +517,7 @@ def connect():
         fake_time_obj.start()
 
     # Use StartTLS if using certificate on non-TLS
-    if args.cert and not args.tls:
+    if not args.tls:
         if not conn.start_tls():
             print(f"❌ Failed to start TLS \nconn.last_error : {conn.last_error}\nconn.result : {conn.result}")
         elif args.verbose:
@@ -521,21 +525,22 @@ def connect():
 
     # Bind
     if args.tls:
-        bind_result = conn.open()
+        conn.open()
+        if conn.closed:
+            print(f"❌ LDAP open failed \nconn.last_error : {conn.last_error}\nconn.result : {conn.result}")
+            return False
     else:
         bind_result = conn.bind()
-
-    if not bind_result:
-        print(f"❌ LDAP bind failed \nconn.last_error : {conn.last_error}\nconn.result : {conn.result}")
-        return False
+        if not bind_result:
+            print(f"❌ LDAP bind failed \nconn.last_error : {conn.last_error}\nconn.result : {conn.result}")
+            return False
 
     # Release clock skew
     if not args.dontfixtime:
         fake_time_obj.stop()
 
     identity = conn.extend.standard.who_am_i()
-    if args.verbose:
-        print(f"✅ Authenticated as {identity} : {srv}")
+    print(f"✅ Authenticated as {identity} : {srv}")
 
     # First query
     conn_test = conn.search('', '(objectClass=*)', search_scope='BASE', attributes=['distinguishedName'], size_limit=1)
@@ -636,7 +641,7 @@ def dump_aces(conn, filter):
         sd_search = conn.search(
             search_base=args.base_dn,
             search_filter=filter, 
-            search_scope=SUBTREE,
+            search_scope=ldap3.SUBTREE,
             attributes=['nTSecurityDescriptor', 'distinguishedName', 'objectClass', 'sAMAccountName'],
             paged_size=int(args.pagesize),
             controls=controls,
@@ -674,6 +679,7 @@ def main():
     parser.add_argument('--cert', help='Certificate file')
     parser.add_argument('--certkey', help='Key file')
     parser.add_argument('--certpass', help='Certificate password if any')
+    parser.add_argument('--userdn', help='User DN for certificate Auth')
     parser.add_argument('--kdc', help='KDC FQDN')
     parser.add_argument('--port', help='LDAP port')
     parser.add_argument('-i','--interact', action='store_true', help='Connect and spawn python console')

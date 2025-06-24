@@ -86,7 +86,7 @@ BANNER="""
   ██╔══██║██║     ██╔══╝  ██║  ██║██║   ██║██║╚██╔╝██║██╔═══╝ 
   ██║  ██║╚██████╗███████╗██████╔╝╚██████╔╝██║ ╚═╝ ██║██║     
   ╚═╝  ╚═╝ ╚═════╝╚══════╝╚═════╝  ╚═════╝ ╚═╝     ╚═╝╚═╝     
-            -- version 0.0.7 --
+            -- version 0.0.8 --
 """
 
 INTERACTIVE_HELP="""
@@ -138,6 +138,7 @@ SID_DICT={
 }
 
 GUIDS_DICT = {
+'00fbf30c-91fe-11d1-aebc-0000f80367c1': 'altSecurityIdentities',
 'bf967a86-0de6-11d0-a285-00aa003049e2': 'Computer',
 'da823a60-41f0-4c89-942b-2b70a6c003d4': 'Validated-MS-DS-JetDB-Page-Size',
 '9b026da6-0d3c-465c-8bee-5199d7165cba': 'DS-Validated-Write-Computer',

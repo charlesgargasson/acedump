@@ -45,6 +45,7 @@ Getting Started
     --cert CERT           Certificate file
     --certkey CERTKEY     Key file
     --certpass CERTPASS   Certificate password if any
+    --userdn USERDN       User DN for certificate Auth
     --kdc KDC             KDC FQDN
     --port PORT           LDAP port
     -i, --interact        Connect and spawn python console
@@ -66,7 +67,7 @@ Getting Started
 Credentials
 ***********
 
-| ACEDump support NTLM, Kerberos, X509 certificates, NT hash, AES hash, user/password.
+| ACEDump support NTLM, Kerberos, X509 certificates (no pfx support yet), NT hash, AES hash, user/password, StartTLS (389) and TLS (636) 
 | If you don't provide any hash or password, ACEDump will try a blank password.
 | Kerberos auth require valid DNS entry for targeted DC.
 
@@ -85,7 +86,10 @@ Credentials
     # Kerberos user/password
     acedump -v -k -s DC01.BOX.HTB -u USER -d BOX.HTB -p 'FooBar_123'
 
-    # Certificate X509 PEM format (no pfx support yet)
+    # Certificate X509 PEM over TLS (636)
+    acedump -v -s DC01.BOX.HTB -u USER -d BOX.HTB --cert user.crt --certkey user.key --tls
+
+    # Certificate X509 PEM with StartTLS (389)
     acedump -v -s DC01.BOX.HTB -u USER -d BOX.HTB --cert user.crt --certkey user.key
 
     # NTLM (password or hash)
@@ -94,15 +98,6 @@ Credentials
 
     # Anonymous (untested)
     acedump -v -s DC01.BOX.HTB
-
-|
-
-***************
-Certificate/TLS
-***************
-
-| ACEDump support user certificate with StartTLS (389)
-| I currently have issues with TLS (636) 
 
 |
 
