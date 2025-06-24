@@ -51,9 +51,10 @@ Getting Started
     -i, --interact        Connect and spawn python console
     --dontfixtime         Don't fix clock skew
     --pagesize PAGESIZE   Size of pagination, default:500
-    -v, --verbose         Enable verbose
-    --debug               Enable debug output (you don't want to use this)
+    -q, --quiet           Quiet output
+    --debug               Enable debug output
     --allsid              Include all SID (low and default RIDs)
+    -e, --exec            Exec python code from stdin
 
 |
 
@@ -67,37 +68,40 @@ Getting Started
 Credentials
 ***********
 
-| ACEDump support NTLM, Kerberos, X509 certificates (no pfx support yet), NT hash, AES hash, user/password, StartTLS (389) and TLS (636) 
+| ACEDump support NTLM, Kerberos, X509 certificates (no pfx support yet), NT hash, AES hash, user/password, TLS (636) and StartTLS (389).
 | If you don't provide any hash or password, ACEDump will try a blank password.
-| Kerberos auth require valid DNS entry for targeted DC.
+|
+| Kerberos auth require valid DNS entries.
+| If no kerberos ccache set, ACEDump retrieve a new TGT.
+| If no kerberos configuration set, ACEDump will use its own.
 
 .. code-block:: bash
 
     # Kerberos CCACHE
     export KRB5CCNAME='USER.ccache'
-    acedump -v -k -s DC01.BOX.HTB -u USER -d BOX.HTB 
+    acedump -k -s DC01.BOX.HTB -u USER -d BOX.HTB 
 
     # Kerberos NTHash (etype23)
-    acedump -v -k -s DC01.BOX.HTB -u USER -d BOX.HTB -H 31d6cfe0d16ae931b73c59d7e0c089c0
+    acedump -k -s DC01.BOX.HTB -u USER -d BOX.HTB -H 31d6cfe0d16ae931b73c59d7e0c089c0
 
     # Kerberos AES
-    acedump -v -k -s DC01.BOX.HTB -u USER -d BOX.HTB --aes 910e4c922b7516d4a17f05b5ae6a147578564284fff8461a02298ac9263bc913
+    acedump -k -s DC01.BOX.HTB -u USER -d BOX.HTB --aes 910e4c922b7516d4a17f05b5ae6a147578564284fff8461a02298ac9263bc913
 
     # Kerberos user/password
-    acedump -v -k -s DC01.BOX.HTB -u USER -d BOX.HTB -p 'FooBar_123'
+    acedump -k -s DC01.BOX.HTB -u USER -d BOX.HTB -p 'FooBar_123'
 
     # Certificate X509 PEM over TLS (636)
-    acedump -v -s DC01.BOX.HTB -u USER -d BOX.HTB --cert user.crt --certkey user.key --tls
+    acedump -s DC01.BOX.HTB -u USER -d BOX.HTB --cert user.crt --certkey user.key --tls
 
     # Certificate X509 PEM with StartTLS (389)
-    acedump -v -s DC01.BOX.HTB -u USER -d BOX.HTB --cert user.crt --certkey user.key
+    acedump -s DC01.BOX.HTB -u USER -d BOX.HTB --cert user.crt --certkey user.key
 
     # NTLM (password or hash)
-    acedump -v -s DC01.BOX.HTB -u USER -d BOX.HTB -H 31d6cfe0d16ae931b73c59d7e0c089c0
-    acedump -v -s DC01.BOX.HTB -u USER -d BOX.HTB -p 'FooBar_123'
+    acedump -s DC01.BOX.HTB -u USER -d BOX.HTB -H 31d6cfe0d16ae931b73c59d7e0c089c0
+    acedump -s DC01.BOX.HTB -u USER -d BOX.HTB -p 'FooBar_123'
 
     # Anonymous (untested)
-    acedump -v -s DC01.BOX.HTB
+    acedump -s DC01.BOX.HTB
 
 |
 
@@ -110,18 +114,37 @@ NTP
 
 |
 
+****
+Exec
+****
+
+| ACEDump can execute python code from stdin after connection.
+| The connection object is "conn".
+
+.. code-block:: bash
+
+    acedump -s 10.129.211.247 -u john -p Pototo_1 -e <<< 'print(conn)'
+    cat script.py | acedump -s 10.129.211.247 -u john -p Pototo_1 -e
+
+    cat <<'EOF'| acedump -s 10.129.211.247 -u john -p Pototo_1 -e
+    conn.search(args.base_dn, '(SamAccountName=Administrator)', attributes=['*'])
+    print(conn.entries)
+    EOF
+
+|
+
 ***********
 Interactive
 ***********
 
-| ACEDump connect to LDAP and start a python console.
+| ACEDump start a python console after connection.
 | The connection object is "conn"
 
 |
 
-.. code-block:: bash
+.. code-block::
 
-    $ acedump -s 10.129.231.205 -u USER -p Password123 -k -i -v
+    $ acedump -s 10.129.211.247 -u john -p Pototo_1 -i -q
 
       █████╗  ██████╗███████╗██████╗ ██╗   ██╗███╗   ███╗██████╗ 
      ██╔══██╗██╔════╝██╔════╝██╔══██╗██║   ██║████╗ ████║██╔══██╗
@@ -129,25 +152,26 @@ Interactive
      ██╔══██║██║     ██╔══╝  ██║  ██║██║   ██║██║╚██╔╝██║██╔═══╝ 
      ██║  ██║╚██████╗███████╗██████╔╝╚██████╔╝██║ ╚═╝ ██║██║     
      ╚═╝  ╚═╝ ╚═════╝╚══════╝╚═════╝  ╚═════╝ ╚═╝     ╚═╝╚═╝     
-                -- version 0.0.5 --
+                -- version 0.0.9 --
 
-    ✅ Anonymous bind : ldap://10.129.231.205:389 - cleartext
-    ⚠️  LDAP clock in past : 2025-06-20 18:19:09 (7199.408678 seconds)
-    🛠️  KDC : DC01.BOX.HTB
-    🛠️  KRB5_CONFIG saved to /tmp/krb.conf
-    ✅ CCache saved to /tmp/USER.ccache
-    ✅ Authenticated : ldap://DC01.BOX.HTB:389 - cleartext
-    ✅ Valid DN : DC=BOX,DC=htb
+    ⚠️  LDAP clock in futur 2025-06-25 02:04:56 (-7199.31662 seconds)
+    ✅ StartTLS
+    ✅ Authenticated as u:BOX\john
 
-    ------------------------
-    ACEDump interactive mode
-    ------------------------
+    👾 INTERACTIVE MODE 👾
+
+      search('administrator') # Search object using SID/DN/CN/SAN
+      setpassword('administrator', 'password') # Change object password using SID/DN/CN/SAN
+      deleted() # Search deleted object using SID/DN/CN/SAN
+      restore('deleteduser') # Restore delete object using SID/DN/CN/SAN
+      last() # Print conn.last_error and conn.result
+      conn.entries # Print conn's last results
 
     Python 3.11.2 (main, Apr 28 2025, 14:11:48) [GCC 12.2.0] on linux
     Type "help", "copyright", "credits" or "license" for more information.
     (InteractiveConsole)
     >>> print(conn)
-    ldap://DC01.BOX.HTB:389 - cleartext - user: None - not lazy - bound - open - <local: 10.10.14.182:54201 - remote: 10.129.231.205:389> - tls not started - listening - SyncStrategy - internal decoder
+    ldap://10.129.211.247:389 - cleartext - user: BOX.HTB\john - not lazy - bound - open - <local: 10.10.14.191:54227 - remote: 10.129.211.247:389> - tls started - listening - SyncStrategy - internal decoder
 
 |
 
@@ -175,7 +199,7 @@ Interactive
 
 .. code-block:: bash
 
-    conn.search(args.base_dn, '(SamAccountName=johndoe)', attributes=['*'])
+    conn.search(args.base_dn, '(SamAccountName=administrator)', attributes=['*'])
     conn.entries
 
 |

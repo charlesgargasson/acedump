@@ -86,15 +86,8 @@ BANNER="""
   ██╔══██║██║     ██╔══╝  ██║  ██║██║   ██║██║╚██╔╝██║██╔═══╝ 
   ██║  ██║╚██████╗███████╗██████╔╝╚██████╔╝██║ ╚═╝ ██║██║     
   ╚═╝  ╚═╝ ╚═════╝╚══════╝╚═════╝  ╚═════╝ ╚═╝     ╚═╝╚═╝     
-            -- version 0.0.8 --
+            -- version 0.0.9 --
 """
-
-INTERACTIVE_HELP="""
-------------------------
-ACEDump interactive mode
-------------------------
-"""
-
 
 # Common AD GUIDs for property/extended rights
 # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/ecb0c7fa-9a48-4ecc-a175-ca3be79b5e6e
@@ -123,9 +116,11 @@ SID_DICT={
 'S-1-5-13': 'Terminal Server Users 📁',          # Remote desktop users
 'S-1-5-14': 'Remote Interactive Logon ⚙️ ',       # RDP logon
 'S-1-5-15': 'This Organization ⚙️ ',              # Certificate-based logon
+'S-1-5-17': 'IUSR ⚙️ ',
 'S-1-5-18': 'Local System ⚙️ ',                   # SYSTEM account
 'S-1-5-19': 'Local Service ⚙️ ',                  # LocalService account
 'S-1-5-20': 'Network Service ⚙️ ',                # NetworkService account
+'S-1-5-32': 'Builtin ⚙️ ',
 'S-1-5-32-544': 'Administrators 📁',             # Built-in Administrators group
 'S-1-5-32-545': 'Users 📁',                      # Built-in Users group
 'S-1-5-32-546': 'Guests 📁',                     # Built-in Guests group

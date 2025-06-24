@@ -9,6 +9,11 @@ from libfaketime import fake_time, reexec_if_needed
 reexec_if_needed()
 sys.stdout = original_stdout
 
+######
+
+from pathlib import Path
+
+import json
 import struct
 import os
 import ipaddress
@@ -27,8 +32,13 @@ from impacket.krb5.kerberosv5 import getKerberosTGT
 from impacket.krb5.types import Principal
 from impacket.krb5.constants import PrincipalNameType
 
-from src.vars import GUIDS_DICT, ACE_TYPES, ACE_TYPES_EMOJI, ACCESS_MASK, AD_DEFAULTS, BANNER, INTERACTIVE_HELP, SID_DICT
+from src.vars import GUIDS_DICT, ACE_TYPES, ACE_TYPES_EMOJI, ACCESS_MASK, AD_DEFAULTS, BANNER, SID_DICT
 import logging
+
+def get_acedump_folder():
+    acedumpfolder = Path.home().absolute().as_posix() + '/.acedump/'
+    Path(acedumpfolder).mkdir(parents=False, exist_ok=True)
+    return acedumpfolder
 
 def set_krb_config(server_domain):
     krb_config =   '[libdefaults]' + '\n'
@@ -46,18 +56,33 @@ def set_krb_config(server_domain):
     krb_config += f'{server_domain} = {server_domain}' + '\n'
     krb_config += f'.{server_domain} = {server_domain}' + '\n'
 
-    krb_config_file = '/tmp/krb.conf'
+    krb_config_file = get_acedump_folder() + 'krb.conf'
 
     with open(krb_config_file, "w") as f:
         f.write(krb_config)
 
     os.environ["KRB5_CONFIG"] = krb_config_file
 
-    if args.verbose:
-        print(f"🛠️  KRB5_CONFIG saved to {krb_config_file}")
+    if not args.quiet:
+        print("🛠️  KRB5_CONFIG " + Style.BRIGHT + Fore.CYAN + f"{krb_config_file}" + Style.RESET_ALL)
 
 def retrieve_tgt():
     """Retrieve a Kerberos TGT and save it to a ccache file"""
+
+     # Specified KDC
+    if args.kdc:
+        args.kdc = args.kdc.upper()
+
+    # KDC from server value
+    elif not is_valid_ip(args.server):
+        args.kdc = args.server
+
+    if not args.quiet:
+        print("\n⚙️  Connecting to KDC .. " + Style.BRIGHT + Fore.CYAN + f"{args.kdc}" + Style.RESET_ALL)
+
+    krb_config_file = os.environ.get("KRB5_CONFIG")
+    if not krb_config_file:
+        set_krb_config(server_domain)
 
     try:
         # Create user principal
@@ -82,7 +107,7 @@ def retrieve_tgt():
         # Get TGT
         #freezer = freeze_time(ldap_currentTime)
         #freezer.start()
-        if not args.dontfixtime:
+        if fixclockskew and not args.dontfixtime:
             fake_time_obj = fake_time(ldap_currentTime, tz_offset=0)
             fake_time_obj.start()
 
@@ -97,28 +122,24 @@ def retrieve_tgt():
             serverName = None,
         )
 
-        if not args.dontfixtime:
+        if fixclockskew and not args.dontfixtime:
             fake_time_obj.stop()
 
         # Save ticket to ccache
         ccache = CCache()
         ccache.fromTGT(tgt, old_session_key, old_session_key)
 
-        # Ensure directory exists
-        ccache_dir = "/tmp"
-        os.makedirs(ccache_dir, exist_ok=True)
-        
-        ccache_file = f"{ccache_dir}/{args.username}.ccache"
+        ccache_file = get_acedump_folder() + f"{args.username}.ccache"
         ccache.saveFile(ccache_file)
 
-        if args.verbose:
-            print(f"✅ CCache saved to {ccache_file}")
+        if not args.quiet:
+            print("✅ CCache saved to " + Style.BRIGHT + Fore.GREEN + f"{ccache_file}" + Style.RESET_ALL)
 
         os.environ["KRB5CCNAME"] = ccache_file
         return
 
     except Exception as e:
-        print(f"❌ Error retrieving TGT: {str(e)}")
+        print(f"❌ Asking TGT \n{str(e)}")
         raise
 
 def format_guid(guid_bytes):
@@ -162,6 +183,8 @@ def parse_object_ace_flags(flags):
     return flag_names
 
 def resolve_sid(conn):
+    global SID_DICT
+    logger.debug(f"\n-- Searching for SIDs")
     cookie = None
     while True:
         sd_search = conn.search(
@@ -180,12 +203,15 @@ def resolve_sid(conn):
         for entry in conn.entries:
             name = entry.sAMAccountName.value or entry.name.value
             if not name:
+                logger.debug(f"? {entry.objectSid.value}")
                 continue
 
             obj_class = entry.objectClass.values if entry.objectClass else []
 
             obj_type = '⚙️ ' 
-            if 'computer' in obj_class :
+            if 'msDS-GroupManagedServiceAccount' in obj_class :
+                obj_type = '🤖'
+            elif 'computer' in obj_class :
                 obj_type = '💻'
             elif 'user' in obj_class :
                 obj_type = '👤'
@@ -194,12 +220,13 @@ def resolve_sid(conn):
                 
             if not entry.objectSid.value in SID_DICT.keys():
                 SID_DICT[entry.objectSid.value]=f"{name} {obj_type}"
+                logger.debug(f"{obj_type} {entry.objectSid.value:<40}\t{name:<40}\t{obj_class}")
 
         if not cookie:
             break
 
-    if args.verbose:
-        print(f'✅ {len(SID_DICT)} SIDs Resolved')
+    if not args.quiet:
+        print("✅ Resolved SIDs " + Style.BRIGHT + Fore.GREEN + f"{len(SID_DICT)}" + Style.RESET_ALL)
 
 def parse_security_descriptor(sd_bytes):
     """Parse security descriptor and extract ACEs - Fixed version"""
@@ -217,15 +244,15 @@ def parse_security_descriptor(sd_bytes):
         sacl_offset = struct.unpack('<L', sd_bytes[12:16])[0]
         dacl_offset = struct.unpack('<L', sd_bytes[16:20])[0]
         
-        logger.debug(f" SD Header: rev={revision}, control=0x{control:04x}, "
-              f"owner={owner_offset}, group={group_offset}, sacl={sacl_offset}, dacl={dacl_offset}")
+        #logger.debug(f" SD Header: rev={revision}, control=0x{control:04x}, "
+        #      f"owner={owner_offset}, group={group_offset}, sacl={sacl_offset}, dacl={dacl_offset}")
         
         aces = []
         
         # Parse DACL with better bounds checking
         if dacl_offset != 0 and dacl_offset < len(sd_bytes):
             dacl_data = sd_bytes[dacl_offset:]
-            logger.debug(f" DACL data length: {len(dacl_data)}")
+            #logger.debug(f" DACL data length: {len(dacl_data)}")
             
             if len(dacl_data) >= 8:
                 dacl_revision = dacl_data[0]
@@ -234,7 +261,7 @@ def parse_security_descriptor(sd_bytes):
                 ace_count = struct.unpack('<H', dacl_data[4:6])[0]
                 dacl_sbz2 = struct.unpack('<H', dacl_data[6:8])[0]
                 
-                logger.debug(f" DACL: rev={dacl_revision}, size={dacl_size}, ace_count={ace_count}")
+                #logger.debug(f" DACL: rev={dacl_revision}, size={dacl_size}, ace_count={ace_count}")
                 
                 # Validate DACL size
                 if dacl_size > len(dacl_data) or dacl_size < 8:
@@ -244,28 +271,31 @@ def parse_security_descriptor(sd_bytes):
                 ace_offset = 8
                 for i in range(ace_count):
                     if ace_offset >= dacl_size:
-                        logger.debug(f" ACE {i}: offset {ace_offset} >= DACL size {dacl_size}")
+                        #logger.debug(f" ACE {i}: offset {ace_offset} >= DACL size {dacl_size}")
                         break
                     
                     remaining_data = dacl_data[ace_offset:dacl_size]
-                    logger.debug(f" Parsing ACE {i} at offset {ace_offset}, remaining: {len(remaining_data)}")
+                    #logger.debug(f" Parsing ACE {i} at offset {ace_offset}, remaining: {len(remaining_data)}")
                     
                     ace = parse_ace(remaining_data)
                     if ace:
                         aces.append(ace)
                         ace_offset += ace.get('size', 0)
-                        logger.debug(f" ACE {i} parsed successfully, size: {ace.get('size', 0)}")
+                        #logger.debug(f" ACE {i} parsed successfully, size: {ace.get('size', 0)}")
                     else:
-                        logger.debug(f" Failed to parse ACE {i}")
+                        #logger.debug(f" Failed to parse ACE {i}")
                         break
             else:
-                logger.debug(f" DACL data too short: {len(dacl_data)} bytes")
+                pass
+                #logger.debug(f" DACL data too short: {len(dacl_data)} bytes")
         else:
-            logger.debug(f" No DACL or invalid offset: {dacl_offset}")
+            pass
+            #logger.debug(f" No DACL or invalid offset: {dacl_offset}")
         
         # Parse SACL if present
         if sacl_offset != 0 and sacl_offset < len(sd_bytes):
-            logger.debug(f" SACL present at offset {sacl_offset}")
+            pass
+            #logger.debug(f" SACL present at offset {sacl_offset}")
             # Similar parsing logic could be added for SACL
         
         return aces
@@ -279,7 +309,7 @@ def parse_security_descriptor(sd_bytes):
 def parse_ace(ace_data):
     """Parse individual ACE with better error handling"""
     if len(ace_data) < 8:
-        logger.debug(f" ACE data too short: {len(ace_data)} bytes")
+        #logger.debug(f" ACE data too short: {len(ace_data)} bytes")
         return None
     
     try:
@@ -288,11 +318,11 @@ def parse_ace(ace_data):
         ace_size = struct.unpack('<H', ace_data[2:4])[0]
         access_mask = struct.unpack('<L', ace_data[4:8])[0]
         
-        logger.debug(f" ACE: type=0x{ace_type:02x}, flags=0x{ace_flags:02x}, size={ace_size}, mask=0x{access_mask:08x}")
+        #logger.debug(f" ACE: type=0x{ace_type:02x}, flags=0x{ace_flags:02x}, size={ace_size}, mask=0x{access_mask:08x}")
         
         # Validate ACE size
         if ace_size < 8 or ace_size > len(ace_data):
-            logger.debug(f" Invalid ACE size: {ace_size} vs {len(ace_data)}")
+            #logger.debug(f" Invalid ACE size: {ace_size} vs {len(ace_data)}")
             return None
         
         ace = {
@@ -330,8 +360,9 @@ def parse_ace(ace_data):
                         ace['object_type_guid'] = object_type_guid
                         ace['object_type_name'] = GUIDS_DICT.get(object_type_guid.lower(), object_type_guid.upper())
                         offset += 16
-                    else:
-                        logger.debug(f" Not enough data for object type GUID at offset {offset}")
+                    else: 
+                        pass
+                        #logger.debug(f" Not enough data for object type GUID at offset {offset}")
                 
                 # Inherited Object Type GUID  
                 if object_flags & 0x02:  # ACE_INHERITED_OBJECT_TYPE_PRESENT
@@ -341,7 +372,8 @@ def parse_ace(ace_data):
                         ace['inherited_object_type_name'] = GUIDS_DICT.get(inherited_object_type_guid.lower(), inherited_object_type_guid.upper())
                         offset += 16
                     else:
-                        logger.debug(f" Not enough data for inherited object type GUID at offset {offset}")
+                        pass
+                        #logger.debug(f" Not enough data for inherited object type GUID at offset {offset}")
                 
                 # Trustee SID
                 if len(ace_data) >= offset + 8:  # Minimum SID size
@@ -397,97 +429,115 @@ def connect():
             ssl_options=[ssl.OP_ALL],
         )
 
-    # Retrieve informations about server
-    conn = ldap3.Connection(srv, auto_bind=True)
-    conn_test = conn.search('', '(objectClass=*)', search_scope='BASE', attributes=['defaultNamingContext','currentTime','serverName'], size_limit=1)
-    if not conn_test:
-        print(f"❌ Error searching Root DSE \nconn.last_error : {conn.last_error}\nconn.result : {conn.result}")
-        return False
+    if not args.quiet:
+        print("⚙️  Connecting.. " + Style.BRIGHT + Fore.CYAN + f"{srv}" + Style.RESET_ALL)
 
-    if args.verbose:
-        print(f"✅ Valid Root DSE for {srv}")
-    
-    # Retrieve domain, potential hostname and time
-    ldap_currentTime_value = srv.info.other.get('currentTime')[0]
-    default_naming_context = srv.info.other.get('defaultNamingContext')[0]
-    serverName = srv.info.other.get('serverName')[0]
-
-    server_domain = str('.'.join([dc.split('=')[1] for dc in default_naming_context.split(',') if dc.startswith('DC=')])).upper()
-    serverName = f"{serverName.split(',')[0].split('=')[1]}.{server_domain}".upper()
-
+    # Retrieve Root DSE informations
     global ldap_currentTime
-    ldap_currentTime = datetime.strptime(ldap_currentTime_value, "%Y%m%d%H%M%S.0Z") # .replace(tzinfo=timezone.utc)
-    clock_skew = datetime.now() - ldap_currentTime
-    if int(clock_skew.total_seconds()) > 5 :
-        print(f"⚠️  LDAP clock in past : {ldap_currentTime} ({clock_skew.total_seconds()} seconds)")
-    elif int(clock_skew.total_seconds()) < -5 :
-        print(f"⚠️  LDAP clock in futur : {ldap_currentTime} ({clock_skew.total_seconds()} seconds)")
-    else:
-        if args.verbose:
-            print(f"✅ Synced with LDAP clock : {ldap_currentTime} ({clock_skew.total_seconds()} seconds)")
-
-    # Set basedn if missing
-    if not args.base_dn:
-        args.base_dn = default_naming_context
+    global fixclockskew
+    global server_domain
+    serverName = None
+    server_domain = None
+    ldap_currentTime = None
+    fixclockskew = False
     
-    # Set domain if missing
-    if not args.domain:
-        args.domain = server_domain
+    conn = ldap3.Connection(srv, auto_bind=True)
+    conn_test = conn.search('', '(objectClass=*)', search_scope='BASE', attributes=[], size_limit=1)
+    if not conn_test:
+        print(f"❌ Error searching Root DSE")
+        print(f"conn.last_error : {conn.last_error}\nconn.result : {conn.result}")
+    else:
+        if not args.quiet:
+            print(f"✅ Available Root DSE")
+
+        logger.debug(srv.info)
+
+        # Retrieve domain, potential hostname and time
+        ldap_currentTime_value = srv.info.other.get('currentTime')[0]
+        default_naming_context = srv.info.other.get('defaultNamingContext')[0]
+        serverName = srv.info.other.get('serverName')[0]
+
+        server_domain = str('.'.join([dc.split('=')[1] for dc in default_naming_context.split(',') if dc.startswith('DC=')])).upper()
+        serverName = f"{serverName.split(',')[0].split('=')[1]}.{server_domain}".upper()
+
+        ldap_currentTime = datetime.strptime(ldap_currentTime_value, "%Y%m%d%H%M%S.0Z") # .replace(tzinfo=timezone.utc)
+        clock_skew = datetime.now() - ldap_currentTime
+        if int(clock_skew.total_seconds()) > 2 :
+            print("⚠️  LDAP clock in past " + Style.BRIGHT + Fore.YELLOW + f"{ldap_currentTime} ({clock_skew.total_seconds()} seconds)" + Style.RESET_ALL)
+            fixclockskew = True
+        elif int(clock_skew.total_seconds()) < -2 :
+            print("⚠️  LDAP clock in futur " + Style.BRIGHT + Fore.YELLOW + f"{ldap_currentTime} ({clock_skew.total_seconds()} seconds)" + Style.RESET_ALL)
+            fixclockskew = True
+        else:
+            if not args.quiet:
+                print(f"✅ Synced with LDAP clock : {ldap_currentTime} ({clock_skew.total_seconds()} seconds)")
+
+        # Set basedn if missing
+        if not args.base_dn:
+            args.base_dn = default_naming_context
+        
+        # Set domain if missing
+        if not args.domain:
+            args.domain = server_domain
+        
+        # Terminate
+        conn.unbind()
+    
+    # Set user
+    user = None
+    if args.domain and args.username:
+        user = f'{args.domain}\\{args.username}'
+    elif not args.domain:
+        print(f"⚠️ Missing Domain")
+        if args.username:
+            user = args.username
 
     # Handle TLS + Cert
     if args.cert and args.tls:
-        conn = ldap3.Connection(srv)
+        if args.userdn :
+            sasl_credentials=f"{args.userdn}"
+        else:
+            sasl_credentials=()
+        conn = ldap3.Connection(srv, user=user, authentication='SASL', sasl_mechanism='EXTERNAL', sasl_credentials=sasl_credentials, auto_bind=False)
 
     # Kerberos
     elif args.kerberos:
         # Kerberos need the server name
-        args.server = serverName
+        if serverName:
+            args.server = serverName
         srv.host = args.server
-        conn = ldap3.Connection(srv, authentication='SASL', sasl_mechanism='GSSAPI', auto_bind=False)
 
-        # Specified KDC
-        if args.kdc:
-            args.kdc = args.kdc.upper()
-
-        # KDC from server value
-        elif not is_valid_ip(args.server):
-            args.kdc = args.server
-
-        if args.verbose:
-            print(f"🛠️  KDC : {args.kdc}")
-
-        krb_config_file = os.environ.get("KRB5_CONFIG")
-        if not krb_config_file:
-            set_krb_config(server_domain)
+        conn = ldap3.Connection(srv, user=user, authentication='SASL', sasl_mechanism='GSSAPI', auto_bind=False)
 
         # Using credentials if specified
         if args.password or args.hashes or args.aes:
             retrieve_tgt()
         else:
             ccache_file = os.environ.get("KRB5CCNAME")
-            if not ccache_file and args.username:
-                print(f"⚠️  Undefined KRB5CCNAME and no given password, login with blank password ...")
-                retrieve_tgt()
-            else:
-                print(f"⚠️  No credentials were supplied, login as anonymous ...")
-                conn = ldap3.Connection(srv, authentication='ANONYMOUS')
+            if not ccache_file:
+                if user:
+                    print(f"⚠️  Undefined KRB5CCNAME and no given password, login with blank password ...")
+                    retrieve_tgt()
+                else:
+                    print(f"⚠️  No credentials were supplied, login as anonymous ...")
+                    conn = ldap3.Connection(srv, authentication='ANONYMOUS')
 
     # NTLM / OTHER
     else:
-
         # Handles hashes for NTLM
         if args.password:
             args.password = f"aad3b435b51404eeaad3b435b51404ee:{compute_nthash(args.password).hex()}"
         elif args.hashes:
             args.password = f"aad3b435b51404eeaad3b435b51404ee:{args.hashes}"
-        elif not args.cert and args.username :
+        elif not args.cert and user:
             args.password = f"aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0"
 
         # Cert without TLS
         if args.cert:
+
             # NTLM Auth + StartTLS
-            if args.password and args.username :
-                conn = ldap3.Connection(srv, user=f'{args.domain}\\{args.username}', password=args.password, authentication='NTLM', auto_bind=False)
+            if args.password and user :
+                conn = ldap3.Connection(srv, user=user, password=args.password, authentication='NTLM', auto_bind=False)
            
             # StartTLS with user DN
             elif args.userdn :
@@ -498,66 +548,85 @@ def connect():
                 conn = ldap3.Connection(srv, authentication='SASL', sasl_mechanism='EXTERNAL', sasl_credentials=(), auto_bind=False)
        
         else:
+
             # Usual NTLM auth
-            if args.password and args.username :
-                conn = ldap3.Connection(srv, user=f'{args.domain}\\{args.username}', password=args.password, authentication='NTLM', auto_bind=False)
+            if args.password and user :
+                conn = ldap3.Connection(srv, user=user, password=args.password, authentication='NTLM', auto_bind=False)
 
             # Blank password
-            elif args.username :
+            elif user :
                 print(f"⚠️  Login with blank password ...")
-                conn = ldap3.Connection(srv, user=f'{args.domain}\\{args.username}', password=args.password, authentication='NTLM', auto_bind=False)
+                conn = ldap3.Connection(srv, user=user, password=args.password, authentication='NTLM', auto_bind=False)
 
             else:
                 print(f"⚠️  No credentials were supplied, login as anonymous ...")
                 conn = ldap3.Connection(srv, authentication='ANONYMOUS')
 
+    if not args.quiet:
+        print("\n⚙️  Connecting.. " + Style.BRIGHT + Fore.CYAN + f"{srv}" + Style.RESET_ALL)
+
     # Fix clock skew
-    if not args.dontfixtime:
+    if fixclockskew and not args.dontfixtime:
         fake_time_obj = fake_time(ldap_currentTime, tz_offset=0)
         fake_time_obj.start()
 
     # Use StartTLS if using certificate on non-TLS
     if not args.tls:
-        if not conn.start_tls():
-            print(f"❌ Failed to start TLS \nconn.last_error : {conn.last_error}\nconn.result : {conn.result}")
-        elif args.verbose:
-            print(f"✅ TLS Started")
+        starttls_oid = '1.3.6.1.4.1.1466.20037'
+        if starttls_oid in [x[0] for x in srv.info.supported_extensions]:
+            if not args.quiet:
+                print(f"⚙️  StartTLS in server supported_extensions, starting..")
+            try:
+                conn.start_tls()
+                print(f"✅ StartTLS")
+            except Exception as e:
+                print(f"❌ StartTLS ({str(e)})")
+                #raise
 
     # Bind
     if args.tls:
         conn.open()
         if conn.closed:
-            print(f"❌ LDAP open failed \nconn.last_error : {conn.last_error}\nconn.result : {conn.result}")
+            print(f"❌ LDAP open failed")
+            print(f"conn.last_error : {conn.last_error}\nconn.result : {conn.result}")
             return False
     else:
         bind_result = conn.bind()
         if not bind_result:
-            print(f"❌ LDAP bind failed \nconn.last_error : {conn.last_error}\nconn.result : {conn.result}")
+            print(f"❌ LDAP bind failed")
+            print(f"conn.last_error : {conn.last_error}\nconn.result : {conn.result}")
             return False
 
     # Release clock skew
-    if not args.dontfixtime:
+    if fixclockskew and not args.dontfixtime:
         fake_time_obj.stop()
 
-    identity = conn.extend.standard.who_am_i()
-    print(f"✅ Authenticated as {identity} : {srv}")
+    logger.debug(f"✅ {conn}")
+    whoami_oid='1.3.6.1.4.1.4203.1.11.3'
+    if whoami_oid in [x[0] for x in srv.info.supported_extensions]:
+        identity = conn.extend.standard.who_am_i()
+        print("✅ Authenticated as " + Style.BRIGHT + Fore.GREEN + f"{identity}" + Style.RESET_ALL)
 
-    # First query
-    conn_test = conn.search('', '(objectClass=*)', search_scope='BASE', attributes=['distinguishedName'], size_limit=1)
+    # First query after bind/open
+    conn_test = conn.search('', '(objectClass=*)', search_scope='BASE', attributes=[], size_limit=1)
     if not conn_test:
         print("❌ Basic search failed")
-        print(conn.last_error)
-        print(conn.result)
+        print(f"conn.last_error : {conn.last_error}\nconn.result : {conn.result}")
         return False
 
+    # Ensure base DN is set
+    if not args.base_dn:
+        args.base_dn = srv.info.other.get('defaultNamingContext')[0]
+    
     # Validate base DN
     base_test = conn.search(args.base_dn, '(objectClass=*)', search_scope='BASE', attributes=['distinguishedName'], size_limit=1)
     if not base_test:
-        print(f"❌ Can't search DN : {args.base_dn}")
+        print(f"❌ Can't search DN {args.base_dn}")
+        print(f"conn.last_error : {conn.last_error}\nconn.result : {conn.result}")
         return False
 
-    if args.verbose:
-        print(f"✅ Valid DN : {args.base_dn}")
+    if not args.quiet:
+        print("✅ Available DN " + Style.BRIGHT + Fore.GREEN + f"{args.base_dn}" + Style.RESET_ALL)
     
     return conn
 
@@ -566,12 +635,12 @@ def parse_sd_search_results(conn):
     for entry in conn.entries:
         if hasattr(entry, 'nTSecurityDescriptor') and entry.nTSecurityDescriptor:
             sd_bytes = entry.nTSecurityDescriptor.raw_values[0]
-            logger.debug(f" SD bytes length: {len(sd_bytes)}")
+            #logger.debug(f" SD bytes length: {len(sd_bytes)}")
             
             # Add hex dump for debugging
             if len(sd_bytes) >= 20:
                 hex_dump = ' '.join(f'{b:02x}' for b in sd_bytes[:20])
-                logger.debug(f" SD header hex: {hex_dump}")
+                #logger.debug(f" SD header hex: {hex_dump}")
             
             aces = parse_security_descriptor(sd_bytes)
             ace_count = 0
@@ -620,16 +689,17 @@ def parse_sd_search_results(conn):
 
                 ace_count += len(aces)
             else:
-                logger.debug(f" No ACEs found for: {entry.distinguishedName}")
+                pass
+                #logger.debug(f" No ACEs found for: {entry.distinguishedName}")
         else:
-            logger.debug(f" No SD for: {entry.distinguishedName}")
+            pass
+            #logger.debug(f" No SD for: {entry.distinguishedName}")
     
-
 def dump_aces(conn, filter):
     """Dump all ACEs from AD objects"""
 
     if args.debug:
-        print(Style.BRIGHT + Fore.YELLOW)
+        print(Style.BRIGHT + Fore.YELLOW, end='')
         print(f"-- Searching objects ... filter: '{filter}'  basedn: '{args.base_dn}'")
         print(Style.RESET_ALL, end='')
     
@@ -685,9 +755,10 @@ def main():
     parser.add_argument('-i','--interact', action='store_true', help='Connect and spawn python console')
     parser.add_argument('--dontfixtime', action='store_true', help="Don't fix clock skew")
     parser.add_argument('--pagesize', help='Size of pagination, default:500', default=500)
-    parser.add_argument('-v','--verbose', action='store_true', help='Enable verbose')
-    parser.add_argument('--debug', action='store_true', help="Enable debug output (you don't want to use this)")
+    parser.add_argument('-q','--quiet', action='store_true', help='Quiet output')
+    parser.add_argument('--debug', action='store_true', help="Enable debug output")
     parser.add_argument('--allsid', action='store_true', help='Include all SID (low and default RIDs)')
+    parser.add_argument('-e','--exec', action='store_true', help="Exec python code from stdin")
 
     global args
     args = parser.parse_args()
@@ -706,16 +777,55 @@ def main():
         if len(args.hashes)>32:
             args.kerberos = True
     
+    global conn
     conn = connect()
     if not conn:
         return
     
-    if args.interact:
-        print(INTERACTIVE_HELP)
-        code.interact(local={**globals(), **locals()})
-        return
-    
     resolve_sid(conn)
+
+    if args.exec:
+        print(Style.BRIGHT + Fore.CYAN, end='')
+        print("\n💎 EXEC MODE 💎\n" + Style.RESET_ALL)
+
+        exec(sys.stdin.read())
+        if not args.interact:
+            return
+    
+    if args.interact:
+        print(Style.BRIGHT + Fore.MAGENTA, end='')
+        print("\n👾 INTERACTIVE MODE 👾\n" + Style.RESET_ALL)
+
+        print("  search('administrator')", end='')
+        print(Style.BRIGHT + Fore.YELLOW, end='')
+        print(" # Search object using SID/DN/CN/SAN" + Style.RESET_ALL)
+
+        print("  setpassword('administrator', 'password')", end='')
+        print(Style.BRIGHT + Fore.YELLOW, end='')
+        print(" # Change object password using SID/DN/CN/SAN" + Style.RESET_ALL)
+
+        print("  deleted()", end='')
+        print(Style.BRIGHT + Fore.YELLOW, end='')
+        print(" # Search deleted object using SID/DN/CN/SAN" + Style.RESET_ALL)
+
+        print("  restore('deleteduser')", end='')
+        print(Style.BRIGHT + Fore.YELLOW, end='')
+        print(" # Restore delete object using SID/DN/CN/SAN" + Style.RESET_ALL)
+
+        print("  last()", end='')
+        print(Style.BRIGHT + Fore.YELLOW, end='')
+        print(" # Print conn.last_error and conn.result" + Style.RESET_ALL)
+
+        print("  conn.entries", end='')
+        print(Style.BRIGHT + Fore.YELLOW, end='')
+        print(" # Print conn's last results" + Style.RESET_ALL)
+
+        print('\n')
+        
+        if not sys.stdin.isatty():
+            sys.stdin = open('/dev/tty')
+        code.interact(local=dict(globals(), **locals()))
+        return
     
     if args.filter:
         dump_aces(conn, args.filter)
@@ -738,3 +848,150 @@ def main():
 if __name__ == '__main__':
     main()
 
+def search(filter=None, display=True, rawFilter=False):
+    """Search and display entries"""
+    global conn
+
+    if not filter:
+        filter = '*'
+    
+    if not rawFilter:
+        filter = f'(|(objectSid={filter})(distinguishedName={filter})(cn={filter})(sAMAccountName={filter}))'
+
+    conn.search(args.base_dn, filter, search_scope=ldap3.SUBTREE, attributes=['*','objectSid'], size_limit=0)
+    if conn.result['result'] != 0 :
+        last()
+        return
+
+    if len(conn.entries) == 0:
+        print(f'❌ No entry found for {filter}')
+    
+    if display:
+        for entry in conn.entries:
+            print('-'*100)
+            print(entry)
+
+def deleted(filter=None, display=True):
+    """Show deleted objects"""
+    global conn
+
+    if not filter:
+        filter = '*'
+
+    conn.search(args.base_dn, f'(&(isDeleted=*)(|(distinguishedName={filter})(cn={filter})(sAMAccountName={filter})(objectSid={filter})))', attributes=['*','objectSid','distinguishedName','msDS-LastKnownRDN'], search_scope=ldap3.SUBTREE, controls=[('1.2.840.113556.1.4.417', True, b'')])
+    if conn.result['result'] != 0 :
+        last()
+        return
+
+    if len(conn.entries) == 0:
+        if display:
+            print(f'❌ No entry found for {filter}')
+        return
+    
+    if display:
+        print("\nrestore(deletedObject, restoredObjectCN, restoredObjectParent)")
+        for entry in conn.entries:
+            if not 'objectSid' in entry.entry_attributes:
+                continue
+            if not 'lastKnownParent' in entry.entry_attributes:
+                continue
+            print(f"restore('{entry.objectSid.value}', '{entry['msDS-LastKnownRDN'].value}', '{entry.lastKnownParent.value}')")
+        print('')
+
+def restore(deletedObject, restoredObjectCN=None, restoredObjectParent=None):
+    """Restore deleted objects"""
+    global conn
+
+    deleted(deletedObject, display=False)
+    if conn.result['result'] != 0 :
+        print(f'❌ No entry found for {deletedObject}')
+        return
+
+    if len(conn.entries) > 1:
+        print('❌ More that one entry for requested object, specify SID instead')
+        return
+
+    if len(conn.entries) == 0:
+        return
+
+    deleted_dn = conn.entries[0].distinguishedName.value
+    deleted_sid = conn.entries[0].objectSid.value
+    print(f"⚙️  SID {deleted_sid}")
+    print(f"⚙️  Old DN {deleted_dn}")
+
+    if not restoredObjectCN:
+        restoredObjectCN = conn.entries[0]['msDS-LastKnownRDN'].value
+    
+    if not restoredObjectParent:
+        restoredObjectParent = conn.entries[0].lastKnownParent.value
+
+    new_dn = f"CN={restoredObjectCN},{restoredObjectParent}"
+    print(f"⚙️  New DN {new_dn}")
+
+    reanimation_controls = [
+        ('1.2.840.113556.1.4.417', True, b'')  # Show deleted objects / reanimation control
+    ]
+
+    conn.modify(
+        dn=deleted_dn,
+        changes={
+            'isDeleted': [(ldap3.MODIFY_DELETE, [])],
+            'distinguishedName': [(ldap3.MODIFY_REPLACE, [new_dn])],
+        },
+        controls=reanimation_controls
+    )
+
+    if conn.result['result'] != 0 :
+        print("❌ Failed to restore object")
+        last()
+        return
+    else:
+        print(f"✅ Restored {restoredObjectCN} !\n")
+
+    #conn.modify(
+    #    dn=new_dn,
+    #    changes={
+    #        'msDS-LastKnownRDN': [(ldap3.MODIFY_DELETE, [])],
+    #        'lastKnownParent': [(ldap3.MODIFY_DELETE, [])],
+    #    },
+    #    controls=reanimation_controls
+    #)
+
+    #if conn.result['result'] != 0 :
+    #    print("❌ Failed to delete msDS-LastKnownRDN and lastKnownParent attributes")
+    #    last()
+    #else:
+    #    print(f"✅ Deleted msDS-LastKnownRDN and lastKnownParent attributes\n")
+
+    search(new_dn)
+
+def setpassword(targetObject, newPassword):
+    global conn
+
+    search(targetObject, display=False)
+    if conn.result['result'] != 0 :
+        return
+    
+    if len(conn.entries) > 1:
+        print('❌ More that one entry for requested object, specify SID instead')
+        return
+
+    if len(conn.entries) == 0:
+        print(f'❌ No entry found for {targetObject}')
+        return
+
+    targetObjectDN = conn.entries[0].distinguishedName.value
+    targetObjectSAN = conn.entries[0].sAMAccountName.value
+    success = conn.modify(
+        dn=targetObjectDN,
+        changes={'unicodePwd': [(ldap3.MODIFY_REPLACE, [f'"{newPassword}"'.encode('utf-16-le')])]}
+    )
+
+    if success:
+        print(f"✅ {targetObjectSAN}'s password set to '{newPassword}' \n")
+    else:
+        print("❌ Failed to set password")
+        last()
+
+def last():
+    print(f"\nconn.last_error: {conn.last_error}\nconn.result: {conn.result}\n")
