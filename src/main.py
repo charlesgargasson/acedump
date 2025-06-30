@@ -32,7 +32,7 @@ from impacket.krb5.kerberosv5 import getKerberosTGT
 from impacket.krb5.types import Principal
 from impacket.krb5.constants import PrincipalNameType
 
-from src.vars import GUIDS_DICT, ACE_TYPES, ACE_TYPES_EMOJI, ACCESS_MASK, AD_DEFAULTS, BANNER, SID_DICT
+from src.vars import ACE_TYPES, ACE_TYPES_EMOJI, ACCESS_MASK, AD_DEFAULTS, BANNER, SID_DICT, RESOLVE_GUID
 import logging
 
 def get_acedump_folder():
@@ -358,7 +358,7 @@ def parse_ace(ace_data):
                     if len(ace_data) >= offset + 16:
                         object_type_guid = format_guid(ace_data[offset:offset+16])
                         ace['object_type_guid'] = object_type_guid
-                        ace['object_type_name'] = GUIDS_DICT.get(object_type_guid.lower(), object_type_guid.upper())
+                        ace['object_type_name'] = RESOLVE_GUID(object_type_guid.lower())
                         offset += 16
                     else: 
                         pass
@@ -369,7 +369,7 @@ def parse_ace(ace_data):
                     if len(ace_data) >= offset + 16:
                         inherited_object_type_guid = format_guid(ace_data[offset:offset+16])
                         ace['inherited_object_type_guid'] = inherited_object_type_guid
-                        ace['inherited_object_type_name'] = GUIDS_DICT.get(inherited_object_type_guid.lower(), inherited_object_type_guid.upper())
+                        ace['inherited_object_type_name'] = RESOLVE_GUID(object_type_guid.lower())
                         offset += 16
                     else:
                         pass
@@ -661,7 +661,7 @@ def parse_sd_search_results(conn):
                     if not args.allsid and trustee in AD_DEFAULTS:
                         continue
 
-                    target_object = ace.get('object_type_name', ace.get('object_type_guid', 'Any Property'))
+                    target_object = ace.get('object_type_name', ace.get('object_type_guid', 'Any'))
                     #target_inherited_object = ace.get('inherited_object_type_name', ace.get('object_type_guid', 'ALL'))
 
                     line = Style.NORMAL

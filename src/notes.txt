@@ -30,9 +30,55 @@ while True:
     if not cookie:
         break
 
-for k,v in guid_map.items():
-    print(f"'{k}': '{v}',")
 
-for k,v in GUIDS_DICT.items():
-    print(f"'{k}': '{v}',")
 
+### Web scraping
+
+for ad_attribute in $(curl -sS https://learn.microsoft.com/en-us/windows/win32/adschema/attributes-all | grep 'relative-path'|sed 's#.*href="\([^"]*\)".*#\1#g' | sort -u);do
+PAGE=$(curl -sS "https://learn.microsoft.com/en-us/windows/win32/adschema/$ad_attribute")
+CN=$(echo "$PAGE" |grep 'APIName'| sed 's#.*name="APIName" content="\([^"]*\)".*#\1#')
+GUID=$(echo "$PAGE" |grep 'System-Id-Guid' -A1 | tail -n1 | sed "s#<td>##" | sed "s#</td>##")
+echo "'$GUID': '$CN',"
+done
+
+
+for ad_class in $(curl -sS https://learn.microsoft.com/en-us/windows/win32/adschema/classes-all | grep 'relative-path'|sed 's#.*href="\([^"]*\)".*#\1#g' | sort -u);do
+PAGE=$(curl -sS "https://learn.microsoft.com/en-us/windows/win32/adschema/$ad_class")
+CN=$(echo "$PAGE" |grep 'APIName'| sed 's#.*name="APIName" content="\([^"]*\)".*#\1#')
+GUID=$(echo "$PAGE" |grep 'Schema-Id-Guid' -A1 | tail -n1 | sed "s#<td>##" | sed "s#</td>##")
+echo "'$GUID': '$CN',"
+done
+
+
+for ad_rights_extended in $(curl -sS https://learn.microsoft.com/en-us/windows/win32/adschema/extended-rights | grep 'relative-path'|sed 's#.*href="\([^"]*\)".*#\1#g' | sort -u);do
+PAGE=$(curl -sS "https://learn.microsoft.com/en-us/windows/win32/adschema/$ad_rights_extended")
+CN=$(echo "$PAGE" |grep 'APIName'| sed 's#.*name="APIName" content="\([^"]*\)".*#\1#')
+GUID=$(echo "$PAGE" |grep 'Rights-GUID' -A1 | tail -n1 | sed "s#<td>##" | sed "s#</td>##")
+echo "'$GUID': '$CN',"
+done
+
+for ad_rights_property_sets in $(curl -sS https://learn.microsoft.com/en-us/windows/win32/adschema/property-sets| grep 'relative-path'|sed 's#.*href="\([^"]*\)".*#\1#g' | sort -u);do
+PAGE=$(curl -sS "https://learn.microsoft.com/en-us/windows/win32/adschema/$ad_rights_property_sets")
+CN=$(echo "$PAGE" |grep 'APIName'| sed 's#.*name="APIName" content="\([^"]*\)".*#\1#')
+GUID=$(echo "$PAGE" |grep 'Rights-GUID' -A1 | tail -n1 | sed "s#<td>##" | sed "s#</td>##")
+echo "'$GUID': '$CN',"
+done
+
+
+
+for ad_rights_validated_writes in $(curl -sS https://learn.microsoft.com/en-us/windows/win32/adschema/validated-writes| grep 'relative-path'|sed 's#.*href="\([^"]*\)".*#\1#g' | sort -u);do
+PAGE=$(curl -sS "https://learn.microsoft.com/en-us/windows/win32/adschema/$ad_rights_validated_writes")
+CN=$(echo "$PAGE" |grep 'APIName'| sed 's#.*name="APIName" content="\([^"]*\)".*#\1#')
+GUID=$(echo "$PAGE" |grep 'Rights-GUID' -A1 | tail -n1 | sed "s#<td>##" | sed "s#</td>##")
+echo "'$GUID': '$CN',"
+done
+
+
+## Filter out new entries from AD_OTHER_GUIDS
+for GUID,DESC in AD_OTHER_GUIDS.items():
+    if GUID in AD_ACCESS_RIGHTS_VALIDATED_WRITES.keys(): continue
+    elif GUID in AD_ACCESS_RIGHTS_PROPERTY_SETS.keys(): continue
+    elif GUID in AD_ACCESS_RIGHTS_EXTENDED.keys(): continue
+    elif GUID in AD_CLASSES.keys(): continue
+    elif GUID in AD_ATTRIBUTES.keys(): continue
+    print(f"'{GUID}': '{DESC}',")
