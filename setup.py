@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='acedump',
-    version='0.0.11',
+    version='1.0.0',
     packages=find_packages(),
     install_requires=[
         'ldap3 @ git+https://github.com/cannatag/ldap3',
