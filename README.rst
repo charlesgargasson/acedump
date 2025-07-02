@@ -19,6 +19,9 @@ Getting Started
     # sudo apt install -y libkrb5-dev
     # sudo yum install -y krb5-devel
 
+    # DEV install
+    # pipx install /opt/git/acedump --editable
+
 |
 
 .. code-block::
@@ -203,3 +206,11 @@ Interactive
     conn.entries
 
 |
+
+
+***************
+TroubleShooting
+***************
+
+| LDAP3 (vanilla) don't support GSSAPI Privacy, some operations such as password changes may fail if StartTLS/TLS aren't supported by server
+| https://offsec.almond.consulting/ldap-authentication-in-active-directory-environments.html

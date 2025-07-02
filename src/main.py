@@ -14,6 +14,7 @@ sys.stdout = original_stdout
 from pathlib import Path
 
 import json
+import base64
 import struct
 import os
 import ipaddress
@@ -507,7 +508,7 @@ def connect():
             args.server = serverName
         srv.host = args.server
 
-        conn = ldap3.Connection(srv, user=user, authentication='SASL', sasl_mechanism='GSSAPI', auto_bind=False)
+        conn = ldap3.Connection(srv, user=user, authentication='SASL', sasl_mechanism='GSSAPI', sasl_credentials=(), auto_bind=False)
 
         # Using credentials if specified
         if args.password or args.hashes or args.aes:
@@ -580,7 +581,9 @@ def connect():
                 conn.start_tls()
                 print(f"✅ StartTLS")
             except Exception as e:
-                print(f"❌ StartTLS ({str(e)})")
+                if not args.quiet:
+                    print(f"❌ StartTLS ({str(e)}), falling back to other encryption method")
+                conn.session_security=ldap3.ENCRYPT
                 #raise
 
     # Bind
@@ -763,7 +766,7 @@ def main():
     global args
     args = parser.parse_args()
 
-    print(BANNER)
+    print(Style.BRIGHT + Fore.GREEN + BANNER + Style.RESET_ALL)
 
     if args.debug:
         logger.setLevel(logging.DEBUG)
@@ -803,6 +806,10 @@ def main():
         print("  setpassword('administrator', 'password')", end='')
         print(Style.BRIGHT + Fore.YELLOW, end='')
         print(" # Change object password using SID/DN/CN/SAN" + Style.RESET_ALL)
+    
+        print("  member('user', 'group', True)", end='')
+        print(Style.BRIGHT + Fore.YELLOW, end='')
+        print(" # Add/Remove group member using SID/DN/CN/SAN" + Style.RESET_ALL)
 
         print("  deleted()", end='')
         print(Style.BRIGHT + Fore.YELLOW, end='')
@@ -932,12 +939,14 @@ def restore(deletedObject, restoredObjectCN=None, restoredObjectParent=None):
         ('1.2.840.113556.1.4.417', True, b'')  # Show deleted objects / reanimation control
     ]
 
+    changes={
+        'isDeleted': [(ldap3.MODIFY_DELETE, [])],
+        'distinguishedName': [(ldap3.MODIFY_REPLACE, [new_dn])],
+    }
+
     conn.modify(
         dn=deleted_dn,
-        changes={
-            'isDeleted': [(ldap3.MODIFY_DELETE, [])],
-            'distinguishedName': [(ldap3.MODIFY_REPLACE, [new_dn])],
-        },
+        changes=changes,
         controls=reanimation_controls
     )
 
@@ -965,7 +974,7 @@ def restore(deletedObject, restoredObjectCN=None, restoredObjectParent=None):
 
     search(new_dn)
 
-def setpassword(targetObject, newPassword):
+def setpassword(targetObject, newPassword, oldPassword: str = None):
     global conn
 
     search(targetObject, display=False)
@@ -982,16 +991,87 @@ def setpassword(targetObject, newPassword):
 
     targetObjectDN = conn.entries[0].distinguishedName.value
     targetObjectSAN = conn.entries[0].sAMAccountName.value
+    encoded_newPassword = f'"{newPassword}"'.encode('utf-16-le')
+    if oldPassword:
+        encoded_oldPassword = f'"{oldPassword}"'.encode('utf-16-le')
+        changes={
+            'unicodePwd': [
+                (ldap3.MODIFY_DELETE, [encoded_oldPassword]),
+                (ldap3.MODIFY_ADD, [encoded_newPassword])
+            ]
+        }
+    else:
+        changes={
+            'unicodePwd': [
+                (ldap3.MODIFY_REPLACE, [encoded_newPassword])
+            ]
+        }
+
     success = conn.modify(
         dn=targetObjectDN,
-        changes={'unicodePwd': [(ldap3.MODIFY_REPLACE, [f'"{newPassword}"'.encode('utf-16-le')])]}
+        changes=changes
     )
 
     if success:
-        print(f"✅ {targetObjectSAN}'s password set to '{newPassword}' \n")
+        print(f"✅ {targetObjectSAN}'s password set to '{newPassword}'")
     else:
-        print("❌ Failed to set password")
+        print(f"❌ Failed to set password '{newPassword}' for '{targetObjectDN}'")
+        last()
+
+def member(targetObject, targetGroup, adding:bool = True):
+    global conn
+
+    search(targetObject, display=False)
+    if conn.result['result'] != 0 :
+        return
+    
+    if len(conn.entries) > 1:
+        print('❌ More that one entry for requested object, specify SID instead')
+        return
+
+    if len(conn.entries) == 0:
+        print(f'❌ No entry found for {targetObject}')
+        return
+
+    targetObjectDN = conn.entries[0].distinguishedName.value
+    targetObjectSAN = conn.entries[0].sAMAccountName.value
+
+    search(targetGroup, display=False)
+    if conn.result['result'] != 0 :
+        return
+    
+    if len(conn.entries) > 1:
+        print('❌ More that one entry for requested group, specify SID instead')
+        return
+
+    if len(conn.entries) == 0:
+        print(f'❌ No entry found for {targetGroup}')
+        return
+    
+    targetGroupDN = conn.entries[0].distinguishedName.value
+    targetGroupSAN = conn.entries[0].sAMAccountName.value
+
+    if adding:
+        changes={'member': [(ldap3.MODIFY_ADD, [targetObjectDN])]}
+    else:
+        changes={'member': [(ldap3.MODIFY_DELETE, [targetObjectDN])]}
+
+    success = conn.modify(
+        dn=targetGroupDN,
+        changes=changes
+    )
+
+    if success:
+        if adding:
+            print(f"✅ '{targetObjectSAN}' added to '{targetGroupSAN}'")
+        else:
+            print(f"✅ '{targetObjectSAN}' removed from '{targetGroupSAN}'")
+    else:
+        if adding:
+            print(f"❌ Failed to add '{targetObjectSAN}' to '{targetGroupSAN}'")
+        else:
+            print(f"❌ Failed to remove '{targetObjectSAN}' from '{targetGroupSAN}'")
         last()
 
 def last():
-    print(f"\nconn.last_error: {conn.last_error}\nconn.result: {conn.result}\n")
+    print(f"conn.last_error: {conn.last_error}\nconn.result: {conn.result}\n")
