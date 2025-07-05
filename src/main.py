@@ -70,21 +70,9 @@ def set_krb_config(server_domain):
 def retrieve_tgt():
     """Retrieve a Kerberos TGT and save it to a ccache file"""
 
-     # Specified KDC
-    if args.kdc:
-        args.kdc = args.kdc.upper()
-
-    # KDC from server value
-    elif not is_valid_ip(args.server):
-        args.kdc = args.server
-
     if not args.quiet:
         print("\n⚙️  Connecting to KDC .. " + Style.BRIGHT + Fore.CYAN + f"{args.kdc}" + Style.RESET_ALL)
-
-    krb_config_file = os.environ.get("KRB5_CONFIG")
-    if not krb_config_file:
-        set_krb_config(server_domain)
-
+        
     try:
         # Create user principal
         user_principal = Principal(args.username, type=PrincipalNameType.NT_PRINCIPAL.value)
@@ -509,6 +497,18 @@ def connect():
         srv.host = args.server
 
         conn = ldap3.Connection(srv, user=user, authentication='SASL', sasl_mechanism='GSSAPI', sasl_credentials=(), auto_bind=False)
+
+        # Specified KDC
+        if args.kdc:
+            args.kdc = args.kdc.upper()
+
+        # KDC from server value
+        elif not is_valid_ip(args.server):
+            args.kdc = args.server
+
+        krb_config_file = os.environ.get("KRB5_CONFIG")
+        if not krb_config_file:
+            set_krb_config(server_domain)
 
         # Using credentials if specified
         if args.password or args.hashes or args.aes:
