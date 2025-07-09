@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 AD_DEFAULTS=[
     "DnsAdmins 📁",
@@ -80,9 +82,9 @@ ACCESS_MASK = {
     0x80000000: 'GENERIC_READ'
 }
 
-VERSION="1.0.1"
+VERSION="1.0.2"
 BANNER=f"""
-🍀 ACEDUMP {VERSION} 🍀
+🍀 ACE {VERSION} 🍀
 """
 
 # Common AD GUIDs for property/extended rights
