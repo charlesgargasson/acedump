@@ -23,8 +23,8 @@ def krb_args(parser):
     """Add kerberos arguments to parser"""
     parser_group = parser.add_argument_group('kerberos')
     parser_group.add_argument('-k', '--kerberos', action='store_true', help='Use Kerberos when applicable')
-    parser_group.add_argument('--kdc', help='KDC FQDN')
-    
+    parser_group.add_argument('--kdchost','--kdc', help='KDC FQDN')
+
 def creds_args(parser):
     """Add credentials arguments to parser"""
     parser_group = parser.add_argument_group('credentials')
@@ -47,10 +47,9 @@ def common_args(parser):
 
 def parse_args():
     """Parse arguments"""
-    parser = argparse.ArgumentParser(
-        prog='ace',
-        description=None
-    )
+
+    # Global parser
+    parser = argparse.ArgumentParser(prog='ace', description=None)
 
     # Command to select module to use
     subparsers = parser.add_subparsers(dest='command', help=None, required=True)
@@ -59,7 +58,7 @@ def parse_args():
     winrm_parser = subparsers.add_parser('winrm', help='SMB (not implemented)')
 
     # LDAP subcommand
-    ldap_parser.add_argument('server', help='Target IP or FQDN')
+    ldap_parser.add_argument('ldaphost', help='Target IP or FQDN')
     common_args(ldap_parser)
     cert_args(ldap_parser)
     krb_args(ldap_parser)
@@ -67,13 +66,13 @@ def parse_args():
     ldap_args(ldap_parser)
 
     # SMB subcommand
-    smb_parser.add_argument('server', help='Target IP or FQDN')
+    smb_parser.add_argument('smbhost', help='Target IP or FQDN')
     common_args(smb_parser)
     krb_args(smb_parser)
     creds_args(smb_parser)
 
     # WINRM subcommand
-    winrm_parser.add_argument('server', help='Target IP or FQDN')
+    winrm_parser.add_argument('winrmhost', help='Target IP or FQDN')
     common_args(winrm_parser)
 
     return parser.parse_args()

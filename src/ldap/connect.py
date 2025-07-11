@@ -15,7 +15,6 @@ from src.core.common import is_valid_ip
 from src.krb.krb import set_krb_config, retrieve_tgt
 from src.core.config import Config
 
-
 def connect(config: Config) -> ldap3.Connection:
     """Connect to server and return conn"""
 
@@ -25,7 +24,7 @@ def connect(config: Config) -> ldap3.Connection:
         else:
             config.port=389
 
-    srv = ldap3.Server(config.server.upper(), get_info=ldap3.ALL, port=config.port, use_ssl=config.tls)
+    srv = ldap3.Server(config.ldaphost.upper(), get_info=ldap3.ALL, port=config.port, use_ssl=config.tls)
     if config.cert :
         srv.tls = ldap3.Tls(
             local_private_key_file=config.certkey,
@@ -114,25 +113,25 @@ def connect(config: Config) -> ldap3.Connection:
     elif config.kerberos:
         # Kerberos need the server name
         if serverName:
-            config.server = serverName
-        srv.host = config.server
+            config.ldaphost = serverName
+        srv.host = config.ldaphost
 
         conn = ldap3.Connection(srv, user=user, authentication='SASL', sasl_mechanism='GSSAPI', sasl_credentials=(), auto_bind=False)
 
         # Specified KDC
-        if config.kdc:
-            config.kdc = config.kdc.upper()
+        if config.kdchost:
+            config.kdchost = config.kdchost.upper()
 
         # KDC from server value
-        elif not is_valid_ip(config.server):
-            config.kdc = config.server
+        elif not is_valid_ip(config.ldaphost):
+            config.kdchost = config.ldaphost
 
         krb_config_file = os.environ.get("KRB5_CONFIG")
         if not krb_config_file:
             set_krb_config(config, server_domain)
 
         # Using credentials if specified
-        if config.password or config.hashes or config.aes:
+        if config.password or config.nthash or config.aes:
             retrieve_tgt(config)
         else:
             ccache_file = os.environ.get("KRB5CCNAME")
@@ -149,8 +148,8 @@ def connect(config: Config) -> ldap3.Connection:
         # Handles hashes for NTLM
         if config.password:
             config.password = f"aad3b435b51404eeaad3b435b51404ee:{compute_nthash(config.password).hex()}"
-        elif config.hashes:
-            config.password = f"aad3b435b51404eeaad3b435b51404ee:{config.hashes}"
+        elif config.nthash:
+            config.password = f"aad3b435b51404eeaad3b435b51404ee:{config.nthash}"
         elif not config.cert and user:
             config.password = f"aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0"
 

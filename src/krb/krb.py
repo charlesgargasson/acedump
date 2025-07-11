@@ -23,8 +23,8 @@ def set_krb_config(config: Config, server_domain):
 
     krb_config += f'[realms]' + '\n'
     krb_config += f'{server_domain} = '+r'{' + '\n'
-    krb_config += f'kdc = {config.kdc}' + '\n'
-    krb_config += f'admin_server = {config.kdc}' + '\n'
+    krb_config += f'kdc = {config.kdchost}' + '\n'
+    krb_config += f'admin_server = {config.kdchost}' + '\n'
     krb_config += r'}' + '\n\n'
 
     krb_config += f'[domain_realm]' + '\n'
@@ -45,8 +45,8 @@ def retrieve_tgt(config):
     """Retrieve a Kerberos TGT and save it to a ccache file"""
 
     if not config.quiet:
-        logger.info("\n⚙️  Connecting to KDC .. " + Style.BRIGHT + Fore.CYAN + f"{config.kdc}" + Style.RESET_ALL)
-        
+        logger.info("\n⚙️  Connecting to KDC .. " + Style.BRIGHT + Fore.CYAN + f"{config.kdchost}" + Style.RESET_ALL)
+
     try:
         # Create user principal
         user_principal = Principal(config.username, type=PrincipalNameType.NT_PRINCIPAL.value)
@@ -78,7 +78,7 @@ def retrieve_tgt(config):
             lmhash = lmhash,
             nthash = nthash,
             aesKey = aesKey,
-            kdcHost = config.kdc,
+            kdcHost = config.kdchost,
             serverName = None,
         )
 
@@ -91,6 +91,7 @@ def retrieve_tgt(config):
 
         ccache_file = get_acedump_folder() + f"{config.username}.ccache"
         ccache.saveFile(ccache_file)
+        config.ccache_file = ccache_file
 
         if not config.quiet:
             logger.info("✅ CCache saved to " + Style.BRIGHT + Fore.GREEN + f"{ccache_file}" + Style.RESET_ALL)
