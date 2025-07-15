@@ -5,6 +5,7 @@ from libfaketime import fake_time
 from impacket.ntlm import compute_nthash
 from colorama import Fore, Back, Style
 
+import gssapi
 import ldap3
 import ssl
 import os
@@ -116,7 +117,7 @@ def connect(config: Config) -> ldap3.Connection:
             config.ldaphost = serverName
         srv.host = config.ldaphost
 
-        conn = ldap3.Connection(srv, user=user, authentication='SASL', sasl_mechanism='GSSAPI', sasl_credentials=(), auto_bind=False)
+        conn = ldap3.Connection(srv, authentication='SASL', sasl_mechanism='GSSAPI', sasl_credentials=(), auto_bind=False)
 
         # Specified KDC
         if config.kdchost:
@@ -142,6 +143,8 @@ def connect(config: Config) -> ldap3.Connection:
                 else:
                     logger.warning(f"⚠️  No credentials were supplied, login as anonymous ...")
                     conn = ldap3.Connection(srv, authentication='ANONYMOUS')
+            else:
+                logger.info("♻️  CCache " + Style.BRIGHT + Fore.CYAN + f"{ccache_file}" + Style.RESET_ALL)
 
     # NTLM / OTHER
     else:

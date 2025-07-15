@@ -82,9 +82,15 @@ ACCESS_MASK = {
     0x80000000: 'GENERIC_READ'
 }
 
-VERSION="1.0.3"
-BANNER=f"""
-🍀 ACE {VERSION} 🍀
+import importlib.metadata, sys
+def get_version(pkg: str) -> str:
+    try:
+        return importlib.metadata.version(pkg)
+    except importlib.metadata.PackageNotFoundError:
+        return "???"
+
+VERSION="1.0.4"
+BANNER=f"""🍀 Ace {VERSION} 🔥 Impacket {get_version('impacket')} ✨ ldap3 {get_version('ldap3')} 🔮 gssapi {get_version('gssapi')} 🐍 Python {sys.version.split(' ')[0]}
 """
 
 # Common AD GUIDs for property/extended rights

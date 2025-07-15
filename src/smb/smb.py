@@ -6,8 +6,14 @@ from src.core.config import Config
 
 from impacket import smb
 from impacket.smbconnection import SMBConnection
+from impacket.krb5.ccache import CCache
+from impacket.krb5.types import Principal
+
 from src.krb.krb import set_krb_config, retrieve_tgt
-import os
+from src.core.common import is_valid_ip
+import os, sys, socket
+
+from colorama import Fore, Back, Style
 
 def share_access(conn: SMBConnection, share_name):
 
@@ -62,7 +68,7 @@ def handle_shares(conn: SMBConnection):
         handle_share(conn, share)
 
 def smb_infos(conn: SMBConnection):
-    logger.info(f'[+] {conn.getServerDNSHostName()} -- {conn.getServerOS()} (Signing:{conn.isSigningRequired()}) (LoginRequired:{conn.isLoginRequired()})')
+    logger.info(f'[+] {conn.getServerDNSHostName()} {conn.getServerOS()} (Signing:{conn.isSigningRequired()}) (LoginRequired:{conn.isLoginRequired()})')
 
 def connect(config: Config) -> SMBConnection:
 
@@ -72,14 +78,30 @@ def connect(config: Config) -> SMBConnection:
     if not config.password:
         config.password = ''
 
+    if not config.nthash:
+        config.nthash = ''
+
+    if not config.aes:
+        config.aes = ''
+    
+    if is_valid_ip(config.smbhost):
+        config.smbip = config.smbhost
+        config.smbhost = socket.gethostbyaddr(config.smbip)[0]
+    else:
+        config.smbip = socket.gethostbyname(config.smbhost)
+
+    logger.info("⚙️  Connecting.. " + Style.BRIGHT + Fore.CYAN + f"{config.smbhost} {config.smbip}" + Style.RESET_ALL)
+    
+    conn = SMBConnection(remoteHost=config.smbip, remoteName=config.smbhost)
+
     if config.kerberos:
         if not config.kdchost:
             logger.error('Missing KDC')
-            os.exit(1)
+            sys.exit(1)
 
         if not config.domain:
             logger.error('Missing Domain')
-            os.exit(1)
+            sys.exit(1)
 
         krb_config_file = os.environ.get("KRB5_CONFIG")
         if not krb_config_file:
@@ -87,13 +109,15 @@ def connect(config: Config) -> SMBConnection:
 
         ccache_file = os.environ.get("KRB5CCNAME")
 
-        conn = SMBConnection(config.smbhost)
         if not ccache_file:
-            connected = conn.kerberosLogin(config.username, config.password, config.domain, lmhash='', nthash=config.nthash, aesKey=config.aes, kdcHost=config.kdchost)
+            connected = conn.kerberosLogin(user=config.username, password=config.password, domain=config.domain, lmhash='', nthash=config.nthash, aesKey=config.aes, kdcHost=config.kdchost)
         else:
-            connected = conn.kerberosLogin(config.username, config.password, kdcHost=config.kdchost)
+            logger.info("♻️  CCache " + Style.BRIGHT + Fore.CYAN + f"{ccache_file}" + Style.RESET_ALL)
+            #ccache = CCache.loadFile(ccache_file)
+            #tgt_cred = ccache.getCredential(f'krbtgt/{config.domain}')
+            #tgt = tgt_cred.toTGT()
+            connected = conn.kerberosLogin(user=config.username, password=config.password, domain=config.domain, kdcHost=config.kdchost, useCache=True)
     else:
-        conn = SMBConnection(config.smbhost, config.smbhost)
         connected = conn.login(config.username, config.password)
 
     return connected, conn
@@ -111,7 +135,6 @@ def handle_smb(config: Config):
     
     smb_infos(conn)
     handle_shares(conn)
-
     
     conn.close()
 

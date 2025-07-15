@@ -96,7 +96,7 @@ def retrieve_tgt(config):
         if not config.quiet:
             logger.info("✅ CCache saved to " + Style.BRIGHT + Fore.GREEN + f"{ccache_file}" + Style.RESET_ALL)
 
-        os.environ["KRB5CCNAME"] = ccache_file
+        os.environ["KRB5CCNAME"] = 'FILE:'+ccache_file
         return
 
     except Exception as e:
