@@ -107,7 +107,7 @@ class Commands(object):
             self.last()
             return
 
-        if len(conn.entries) == 0:
+        if len(self.conn.entries) == 0:
             if display:
                 logger.error(f'❌ No entry found for {filter}')
             return
