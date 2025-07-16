@@ -126,7 +126,7 @@ class Commands(object):
         """Restore deleted objects"""
         global conn
 
-        self.deleted(self, deletedObject, display=False)
+        self.deleted(deletedObject, display=False)
         if self.conn.result['result'] != 0 :
             logger.error(f'❌ No entry found for {deletedObject}')
             return
