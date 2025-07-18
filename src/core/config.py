@@ -51,6 +51,9 @@ class Config(object):
     interact = bool = False
     exec = bool = False
 
+    # SMB specific
+    smbip = None
+
     def __init__(self, args):
 
         # Hosts

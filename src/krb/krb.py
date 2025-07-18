@@ -45,7 +45,7 @@ def retrieve_tgt(config):
     """Retrieve a Kerberos TGT and save it to a ccache file"""
 
     if not config.quiet:
-        logger.info("\n⚙️  Connecting to KDC .. " + Style.BRIGHT + Fore.CYAN + f"{config.kdchost}" + Style.RESET_ALL)
+        logger.info("\n⚙️  KDC .. " + Style.BRIGHT + Fore.CYAN + f"{config.kdchost}" + Style.RESET_ALL)
 
     try:
         # Create user principal
@@ -94,9 +94,9 @@ def retrieve_tgt(config):
         config.ccache_file = ccache_file
 
         if not config.quiet:
-            logger.info("✅ CCache saved to " + Style.BRIGHT + Fore.GREEN + f"{ccache_file}" + Style.RESET_ALL)
+            logger.info("✅ CCache saved | export KRB5CCNAME=" + Style.BRIGHT + Fore.GREEN + f"{ccache_file}" + Style.RESET_ALL)
 
-        os.environ["KRB5CCNAME"] = 'FILE:'+ccache_file
+        os.environ["KRB5CCNAME"] = ccache_file
         return
 
     except Exception as e:

@@ -16,9 +16,7 @@ from src.core.common import is_valid_ip
 from src.krb.krb import set_krb_config, retrieve_tgt
 from src.core.config import Config
 
-def connect(config: Config) -> ldap3.Connection:
-    """Connect to server and return conn"""
-
+def preconnect(config: Config) -> tuple[ldap3.Server, ldap3.Connection]:
     if not config.port:
         if config.tls:
             config.port=636
@@ -45,7 +43,7 @@ def connect(config: Config) -> ldap3.Connection:
         )
 
     if not config.quiet:
-        logger.info("⚙️  Connecting.. " + Style.BRIGHT + Fore.CYAN + f"{srv}" + Style.RESET_ALL)
+        logger.info("⚙️  LDAP .. " + Style.BRIGHT + Fore.CYAN + f"{srv}" + Style.RESET_ALL)
 
     # Retrieve Root DSE informations
     serverName = None
@@ -92,7 +90,7 @@ def connect(config: Config) -> ldap3.Connection:
         
         # Terminate
         conn.unbind()
-    
+
     # Set user
     user = None
     if config.domain and config.username:
@@ -144,7 +142,7 @@ def connect(config: Config) -> ldap3.Connection:
                     logger.warning(f"⚠️  No credentials were supplied, login as anonymous ...")
                     conn = ldap3.Connection(srv, authentication='ANONYMOUS')
             else:
-                logger.info("♻️  CCache " + Style.BRIGHT + Fore.CYAN + f"{ccache_file}" + Style.RESET_ALL)
+                logger.info("♻️  KRB5CCNAME " + Style.BRIGHT + Fore.CYAN + f"{ccache_file}" + Style.RESET_ALL)
 
     # NTLM / OTHER
     else:
@@ -185,9 +183,16 @@ def connect(config: Config) -> ldap3.Connection:
             else:
                 logger.warning(f"⚠️  No credentials were supplied, login as anonymous ...")
                 conn = ldap3.Connection(srv, authentication='ANONYMOUS')
+    
+    return srv, conn
+
+def connect(config: Config) -> ldap3.Connection:
+    """Connect to server and return conn"""
+
+    srv, conn = preconnect(config)
 
     if not config.quiet:
-        logger.info("\n⚙️  Connecting.. " + Style.BRIGHT + Fore.CYAN + f"{srv}" + Style.RESET_ALL)
+        logger.info("\n⚙️  LDAP .. " + Style.BRIGHT + Fore.CYAN + f"{srv}" + Style.RESET_ALL)
 
     # Fix clock skew
     if config.clockskew and not config.dontfixtime:

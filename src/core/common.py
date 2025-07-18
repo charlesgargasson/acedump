@@ -9,6 +9,7 @@ from src.core.logger_config import logger
 def get_acedump_folder():
     acedumpfolder = Path.home().absolute().as_posix() + '/.acedump/'
     Path(acedumpfolder).mkdir(parents=False, exist_ok=True)
+    Path(acedumpfolder + 'log').mkdir(parents=False, exist_ok=True)
     return acedumpfolder
 
 def is_valid_ip(address):
