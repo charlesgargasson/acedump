@@ -3,6 +3,11 @@
 
 import argparse
 
+def winrm_args(parser):
+    """Add ldap arguments to parser"""
+    parser_group = parser.add_argument_group('winrm')
+    parser_group.add_argument('--service', help='HTTP/WSMAN', default='HTTP')
+
 def ldap_args(parser):
     """Add ldap arguments to parser"""
     parser_group = parser.add_argument_group('ldap')
@@ -74,5 +79,8 @@ def parse_args():
     # WINRM subcommand
     winrm_parser.add_argument('winrmhost', help='Target IP or FQDN')
     common_args(winrm_parser)
+    krb_args(winrm_parser)
+    creds_args(winrm_parser)
+    winrm_args(winrm_parser)
 
     return parser.parse_args()

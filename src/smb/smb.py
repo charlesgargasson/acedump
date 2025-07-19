@@ -66,18 +66,19 @@ class SMBFuse(Operations):
         with self.connection_lock:
             self.tree_id = self.conn.connectTree(self.share_name)
         
-        self.connected = True
         self.keepalive_thread = None
         self.stop_keepalive = threading.Event()
-        
         self.keepalive_interval = 5
         self._start_keepalive()
         
     def __del__(self):
         with self.connection_lock:
-            self.conn.disconnectTree(self.tree_id)
-            self.conn.logoff()
-            self.conn.close()
+            #self.conn.disconnectTree(self.tree_id)
+            #self.conn.logoff()
+            try:
+                self.conn.close()
+            except:
+                pass
         self._stop_keepalive()
         logger.info(f"Graceful exit")
 
@@ -88,16 +89,16 @@ class SMBFuse(Operations):
             time.sleep(self.keepalive_interval)
 
             try:
-                if self.connected and self.conn:
+                if self.conn:
                     with self.connection_lock:
                         self.conn.getSMBServer().echo()
                     
             except Exception as e:
                 logger.info(f"Keepalive failed: {e}")
                 fail += 1
-                if fail > 3:
-                    self.connected = False
+                if fail > 3 or not self.conn:
                     self.stop_keepalive.set()
+        self.__del__()
             
     def _start_keepalive(self):
         """Start the keepalive thread"""
@@ -113,7 +114,8 @@ class SMBFuse(Operations):
         """Stop the keepalive thread"""
         if self.keepalive_thread:
             self.stop_keepalive.set()
-            self.keepalive_thread.join(timeout=5)
+            if not self.keepalive_thread == threading.current_thread():
+                self.keepalive_thread.join(timeout=5)
             logger.info(f"Keepalive stopped")
 
     def _get_full_path(self, path):
@@ -455,10 +457,6 @@ def connect(config: Config) -> SMBConnection:
         if not config.domain:
             logger.error('❌ Missing Domain')
             sys.exit(1)
-
-        krb_config_file = os.environ.get("KRB5_CONFIG")
-        if not krb_config_file:
-            set_krb_config(config, config.domain)
 
         config.ldaphost = config.domain
         preconnect(config)
