@@ -12,26 +12,43 @@ from pypsrp.client import Client
 from pypsrp.powershell import PowerShell, RunspacePool
 from colorama import Fore, Back, Style
 
-import sys, os
+import sys, os, time
+import threading
+
+connection_lock = threading.Lock()
+stop_keepalive = threading.Event()
+keepalive_interval = 5
+last_status='✅'
+
+def command_ls(ps):
+    ps.add_script("Get-ChildItem | Format-Table Name, Length, LastWriteTime -AutoSize | Out-String")
+
+commands={
+    'ls': command_ls,
+    'dir': command_ls,
+    'll': command_ls,
+}
 
 def get_current_context(pool):
     """Get current username and directory"""
     try:
         # Get current username
-        ps = PowerShell(pool)
-        ps.add_script("$env:USERNAME")
-        ps.invoke()
-        username = ps.output[0].strip() if ps.output else "Unknown"
-        ps.output.clear()
-        del ps
+        with connection_lock:
+            ps = PowerShell(pool)
+            ps.add_script("$env:USERNAME")
+            ps.invoke()
+            username = ps.output[0].strip() if ps.output else "Unknown"
+            #ps.output.clear()
+            del ps
         
         # Get current directory
-        ps = PowerShell(pool)
-        ps.add_script("Get-Location | Select-Object -ExpandProperty Path")
-        ps.invoke()
-        current_dir = ps.output[0].strip() if ps.output else "Unknown"
-        ps.output.clear()
-        del ps
+        with connection_lock:
+            ps = PowerShell(pool)
+            ps.add_script("Get-Location | Select-Object -ExpandProperty Path")
+            ps.invoke()
+            current_dir = ps.output[0].strip() if ps.output else "Unknown"
+            #ps.output.clear()
+            del ps
         
         return username, current_dir
     except Exception as e:
@@ -39,24 +56,44 @@ def get_current_context(pool):
         return "Unknown", "Unknown"
 
 def handle_input(pool):
+    global last_status
     username, current_dir = get_current_context(pool)
-    
-    cmd = input(f"\n{username} | {current_dir} > ")
+    cmd = input(f"\n{last_status} {username} | {current_dir} > ")
+    if stop_keepalive.is_set():
+        return
+
     ps = PowerShell(pool)
-    ps.add_script(cmd)
-    ps.invoke()
-    if ps.had_errors:
-        print('[!] Error')
+
+    if cmd in commands:
+        commands[cmd](ps)
     else:
-        print('[*] Success')
+        ps.add_script(cmd)
+
+    with connection_lock:
+        ps.invoke()
+
+    if ps.had_errors:
+        last_status='❌'
+    else:
+        last_status='✅'
+
     if len(ps.output) > 0 :
         for x in ps.output: 
-            print(x)
+            print(f'{x}')
+    if len(ps.streams.error) > 0:
+        for x in ps.streams.error: 
+            print(f'❌ {x}')
     if len(ps.streams.debug) > 0:
-        print(f"[*] Printing streams debug")
+        for x in ps.streams.warning: 
+            print(f'⚠️  {x}')
+    if len(ps.streams.debug) > 0:
+        for x in ps.streams.verbose: 
+            print(f'⚠️  {x}')
+    if len(ps.streams.debug) > 0:
         for x in ps.streams.debug: 
-            print(x)
-    ps.output.clear()
+            print(f'⚠️  {x}')
+
+    #ps.output.clear()
     del ps
 
 def handle_winrm(config: Config):
@@ -90,5 +127,36 @@ def handle_winrm(config: Config):
         wsman = WSMan(config.winrmhost, username=config.username, password=config.password, domain=config.domain, ssl=False, auth=auth, cert_validation=False, negotiate_service=service)
 
     with RunspacePool(wsman) as pool:
-        while True:
+        start_keepalive(pool)
+        while not stop_keepalive.is_set():
             handle_input(pool)
+
+def keepalive_task(pool):
+    """Background keepalive task"""
+    fail = 0
+    while not stop_keepalive.is_set():
+        time.sleep(keepalive_interval)
+
+        try:
+            with connection_lock:
+                ps = PowerShell(pool)
+                ps.add_script("")
+                ps.invoke()
+            del ps
+                
+        except Exception as e:
+            logger.warning(f"\n⚠️  Keepalive failed: {e}")
+            fail += 1
+            if fail > 1:
+                stop_keepalive.set()
+            
+def start_keepalive(pool):
+    """Start the keepalive thread"""
+    keepalive_thread = threading.Thread(
+        target=keepalive_task,
+        args={pool},
+        daemon=True,
+        name="WINRM-Keepalive"
+    )
+    keepalive_thread.start()
+    #logger.info(f"Keepalive started with {self.keepalive_interval}s interval")
