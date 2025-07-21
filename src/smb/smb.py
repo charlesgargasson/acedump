@@ -446,12 +446,12 @@ def connect(config: Config) -> SMBConnection:
     if not config.aes:
         config.aes = ''
     
-    if not config.smbip:
-        if is_valid_ip(config.smbhost):
-            config.smbip = config.smbhost
-            config.smbhost = socket.gethostbyaddr(config.smbip)[0]
-        else:
-            config.smbip = socket.gethostbyname(config.smbhost)
+    #if not config.smbip:
+    if is_valid_ip(config.smbhost):
+        config.smbip = config.smbhost
+        config.smbhost = socket.gethostbyaddr(config.smbip)[0]
+    else:
+        config.smbip = socket.gethostbyname(config.smbhost)
 
     if config.kerberos:
         if not config.domain:

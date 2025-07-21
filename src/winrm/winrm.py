@@ -11,6 +11,7 @@ from pypsrp.wsman import WSMan
 from pypsrp.client import Client
 from pypsrp.powershell import PowerShell, RunspacePool
 from colorama import Fore, Back, Style
+from libfaketime import fake_time
 
 import sys, os, time
 import threading
@@ -119,17 +120,29 @@ def handle_winrm(config: Config):
         if not ccache_file:
             logger.error("❌ Connection failed")
         
+        # Fix clock skew
+        if config.clockskew and not config.dontfixtime:
+            fake_time_obj = fake_time(config.ldap_currentTime, tz_offset=0)
+            fake_time_obj.start()
+
         logger.info("\n⚙️  WINRM (KRB) .. " + Style.BRIGHT + Fore.CYAN + f"{config.winrmhost} {config.winrmip}" + Style.RESET_ALL)
         wsman = WSMan(config.winrmhost, username=config.username, password=None, domain=config.domain, ssl=False, auth=auth, cert_validation=False, negotiate_service=service)
     
+        with RunspacePool(wsman) as pool:
+            start_keepalive(pool)
+            while not stop_keepalive.is_set():
+                handle_input(pool)
+        
+        if config.clockskew and not config.dontfixtime:
+            fake_time_obj.stop()
     else:
         logger.info("\n⚙️  WINRM .. " + Style.BRIGHT + Fore.CYAN + f"{config.winrmhost}" + Style.RESET_ALL)
         wsman = WSMan(config.winrmhost, username=config.username, password=config.password, domain=config.domain, ssl=False, auth=auth, cert_validation=False, negotiate_service=service)
 
-    with RunspacePool(wsman) as pool:
-        start_keepalive(pool)
-        while not stop_keepalive.is_set():
-            handle_input(pool)
+        with RunspacePool(wsman) as pool:
+            start_keepalive(pool)
+            while not stop_keepalive.is_set():
+                handle_input(pool)
 
 def keepalive_task(pool):
     """Background keepalive task"""

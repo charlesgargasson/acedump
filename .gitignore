@@ -1,2 +1,3 @@
 acedump.egg-info
 *.pyc
+build/*
