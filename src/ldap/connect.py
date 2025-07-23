@@ -186,7 +186,7 @@ def preconnect(config: Config) -> tuple[ldap3.Server, ldap3.Connection]:
     
     return srv, conn
 
-def connect(config: Config) -> ldap3.Connection:
+def connect(config: Config) -> tuple[ldap3.Server, ldap3.Connection]:
     """Connect to server and return conn"""
 
     srv, conn = preconnect(config)
@@ -219,13 +219,13 @@ def connect(config: Config) -> ldap3.Connection:
         if conn.closed:
             logger.error(f"❌ LDAP open failed")
             logger.error(f"conn.last_error : {conn.last_error}\nconn.result : {conn.result}")
-            return False
+            return False, False
     else:
         bind_result = conn.bind()
         if not bind_result:
             logger.error(f"❌ LDAP bind failed")
             logger.error(f"conn.last_error : {conn.last_error}\nconn.result : {conn.result}")
-            return False
+            return False, False
 
     # Release clock skew
     if config.clockskew and not config.dontfixtime:
@@ -242,7 +242,7 @@ def connect(config: Config) -> ldap3.Connection:
     if not conn_test:
         logger.error("❌ Basic search failed")
         logger.error(f"conn.last_error : {conn.last_error}\nconn.result : {conn.result}")
-        return False
+        return False, False
 
     # Ensure base DN is set
     if not config.basedn:
@@ -258,4 +258,4 @@ def connect(config: Config) -> ldap3.Connection:
     if not config.quiet:
         logger.info("✅ Available DN " + Style.BRIGHT + Fore.GREEN + f"{config.basedn}" + Style.RESET_ALL)
     
-    return conn
+    return srv, conn

@@ -2,9 +2,14 @@
 # -*- coding: utf-8 -*-
 
 from datetime import datetime
-
+from colorama import Fore, Back, Style
+from cryptography import x509
+from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
+from cryptography.hazmat.primitives import serialization
 from typing import Optional
+
 from src.core.logger_config import logger
+from src.core.common import get_acedump_folder
 
 class Config(object):
 
@@ -154,3 +159,48 @@ class Config(object):
                 self.aes = self.nthash
                 self.nthash = ''
     
+        if type(self.cert) == str:
+            if self.cert[-4:] in ['.pfx','.PFX', '.p12']:
+                logger.debug(f"📜 PFX {self.cert}")
+
+                with open(self.cert, "rb") as f:
+                    pfx_data = f.read()
+                
+                if type(self.certpass) == str:
+                    self.certpass = self.certpass.encode()
+                else:
+                    self.certpass = None
+
+                private_key, certificate, additional_certs = pkcs12.load_key_and_certificates(pfx_data, self.certpass)
+                self.certpass = None # Reset password
+                pem_key = private_key.private_bytes(
+                    encoding=Encoding.PEM,
+                    format=PrivateFormat.TraditionalOpenSSL,
+                    encryption_algorithm=NoEncryption()
+                )
+
+                logger.info(f"📜 Issuer " + Style.BRIGHT + Fore.CYAN + certificate.issuer.rfc4514_string() + Style.RESET_ALL)
+                logger.info(f"📜 Subject " + Style.BRIGHT + Fore.CYAN + certificate.subject.rfc4514_string() + Style.RESET_ALL)
+
+                san_ext = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+                san = san_ext.value
+                for gn in san:
+                    if isinstance(gn, x509.OtherName):
+                        try:
+                            decoded = gn.value.decode("utf-8").strip()
+                            logger.info(f"📜 SubjectAlternativeName " + Style.BRIGHT + Fore.CYAN + decoded + Style.RESET_ALL)
+                        except UnicodeDecodeError:
+                            logger.info(f"📜 SubjectAlternativeName " + Style.BRIGHT + Fore.CYAN + f"{gn.value!r}" + Style.RESET_ALL )
+
+                pem_cert = certificate.public_bytes(Encoding.PEM)
+
+                certdir = get_acedump_folder() + 'data'
+                self.cert=f"{certdir}/cert.pem"
+                with open(self.cert, "wb") as cert_file:
+                    cert_file.write(pem_cert)
+                    logger.info(f"📜 Extracted PEM " + Style.BRIGHT + Fore.CYAN + f"{self.cert}" + Style.RESET_ALL)
+
+                self.certkey=f"{certdir}/key.pem"
+                with open(self.certkey, "wb") as key_file:
+                    key_file.write(pem_key)
+                    logger.info(f"📜 Extracted KEY " + Style.BRIGHT + Fore.CYAN + f"{self.certkey}" + Style.RESET_ALL)

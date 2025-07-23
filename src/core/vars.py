@@ -89,7 +89,7 @@ def get_version(pkg: str) -> str:
     except importlib.metadata.PackageNotFoundError:
         return "???"
 
-VERSION="1.0.9"
+VERSION="1.0.10"
 BANNER=f"""🍀 Ace {VERSION} 🔥 Impacket {get_version('impacket')} ✨ ldap3 {get_version('ldap3')} 🔮 gssapi {get_version('gssapi')} ⭐​​ pypsrp {get_version('pypsrp')} 🐍 Python {sys.version.split(' ')[0]}
 """
 

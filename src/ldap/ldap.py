@@ -11,16 +11,18 @@ from src.ldap.commands import Commands
 
 def handle_ldap(config: Config):
 
-    conn = connect(config)
+    srv, conn = connect(config)
     if not conn:
         return
     
     resolve_sid(config, conn)
 
-    commands = Commands(config, conn)
+    commands = Commands(config, srv, conn)
 
     if config.exec:
         commands.exec()
+        if not config.interact:
+            return
     
     if config.interact:
         commands.interact()

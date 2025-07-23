@@ -5,8 +5,10 @@ import sys
 
 import ldap3
 import code
+import re
 
 from src.core.logger_config import logger
+from src.ldap.rbcd import RBCD
 from colorama import Fore, Back, Style
 
 from src.core.config import Config
@@ -15,20 +17,52 @@ INTERACTIVE_HELP=f"""
 {Style.BRIGHT}{Fore.MAGENTA}👾 INTERACTIVE {Style.RESET_ALL}
 
   search('administrator') {Style.BRIGHT}{Fore.YELLOW} # Search object using SID/DN/CN/SAN" {Style.RESET_ALL}
-  setpassword('administrator', 'password') {Style.BRIGHT}{Fore.YELLOW} # Change object password using SID/DN/CN/SAN {Style.RESET_ALL}
+  password('administrator', 'password') {Style.BRIGHT}{Fore.YELLOW} # Change object password using SID/DN/CN/SAN {Style.RESET_ALL}
   member('user', 'group', True) {Style.BRIGHT}{Fore.YELLOW} # Add/Remove group member using SID/DN/CN/SAN {Style.RESET_ALL}
   deleted() {Style.BRIGHT}{Fore.YELLOW} # Search deleted object using SID/DN/CN/SAN {Style.RESET_ALL}
   restore('deleteduser') {Style.BRIGHT}{Fore.YELLOW} # Restore delete object using SID/DN/CN/SAN {Style.RESET_ALL}
   last() {Style.BRIGHT}{Fore.YELLOW} # Print conn.last_error and conn.result {Style.RESET_ALL}
   conn.entries {Style.BRIGHT}{Fore.YELLOW} # Print conn's last results {Style.RESET_ALL}
 
+  GetWeakExplicitMappings() {Style.BRIGHT}{Fore.YELLOW} # ESC14 https://github.com/3C4D/GetWeakExplicitMappings {Style.RESET_ALL}
+
+  rbcd = RBCD(srv, conn, 'dc01$', config.basedn) {Style.BRIGHT}{Fore.YELLOW}  # Impacket's rbcd.py support {Style.RESET_ALL}
+  rbcd.read() ; rbcd.write('SERVICE$') ;  rbcd.remove('SERVICE$') ; rbcd.flush()
+
 """
 
 class Commands(object):
 
-    def __init__(self, config: Config, conn: ldap3.Connection):
+    def __init__(self, config: Config, srv: ldap3.Server, conn: ldap3.Connection):
         self.config = config
         self.conn = conn
+        self.srv = srv
+
+    # https://github.com/3C4D/GetWeakExplicitMappings/tree/main
+    def GetWeakExplicitMappings(self):
+        self.conn.search(
+        self.config.basedn,
+        search_filter="(samaccountname=*)",
+        attributes=["altSecurityIdentities","distinguishedName"]
+        )
+
+        #print(conn.result)
+        # Gathers the pairs (altSecurityIdentities:destinguishedName)
+        altsec = []
+        for i in self.conn.response:
+            try:
+                altsec.append((
+                i["attributes"]["altSecurityIdentities"],
+                i["attributes"]["distinguishedName"]
+                ))
+            except: pass
+
+        # Prints all the weak ones (<I>..<S>|<S>...|<RFC822>...)
+        for i in altsec:
+            a = [j for j in i[0] if re.match("(?!(X509:<(SKI|SHA1-PUKEY)>|X509:<I>.*<SR>))", j)]
+            if a != []:
+                logger.info("[+]",i[1])
+                for j in a: logger.info("   -", j)
 
     def exec(self):
         msg = Style.BRIGHT + Fore.CYAN
@@ -37,6 +71,7 @@ class Commands(object):
         logger.info(msg)
 
         conn = self.conn
+        srv = self.srv
         config = self.config
         search = self.search
         password = self.password
@@ -44,10 +79,9 @@ class Commands(object):
         deleted = self.deleted
         restore = self.restore
         last = self.last
+        GetWeakExplicitMappings = self.GetWeakExplicitMappings
 
         exec(sys.stdin.read())
-        if not self.config.interact:
-            return
             
     def interact(self):
 
@@ -56,6 +90,7 @@ class Commands(object):
 
         local=dict(globals(), **locals())
         local['conn'] = self.conn
+        local['srv'] = self.srv
         local['config'] = self.config
         local['search'] = self.search
         local['password'] = self.password
@@ -63,7 +98,8 @@ class Commands(object):
         local['deleted'] = self.deleted
         local['restore'] = self.restore
         local['last'] = self.last
-
+        local['GetWeakExplicitMappings'] = self.GetWeakExplicitMappings
+        local['RBCD'] = RBCD
 
         def interact_help():
             logger.info(INTERACTIVE_HELP)
