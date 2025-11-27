@@ -13,22 +13,17 @@ Getting Started
 
 .. code-block:: bash
 
+    # Dependencies
+    # sudo apt install -y libkrb5-dev libfuse2
+    # sudo yum install -y krb5-devel
+
+    # Install ACE
     pipx install git+https://github.com/charlesgargasson/acedump.git@main
     # pipx uninstall acedump
     # pipx upgrade acedump
 
-    # sudo apt install -y libkrb5-dev
-    # sudo yum install -y krb5-devel
-
     # DEV install
     # pipx install /opt/git/acedump --editable
-
-|
-
-.. image:: demo/img1.png
-  :width: 1200
-  :alt: IMG1
-
 |
 
 ***********
